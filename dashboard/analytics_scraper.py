@@ -16,6 +16,7 @@ OUTPUT_DIR    = Path(__file__).parent.parent / "output"
 
 
 def _get_chrome_cookies() -> list[dict]:
+    # Auf Cloud/Railway gibt es keinen Chrome — graceful fallback
     try:
         import browser_cookie3
         jar = browser_cookie3.chrome(domain_name=".tiktok.com")
@@ -23,7 +24,7 @@ def _get_chrome_cookies() -> list[dict]:
                  "domain": c.domain if c.domain.startswith(".") else "." + c.domain,
                  "path": c.path or "/"} for c in jar]
     except Exception as e:
-        print(f"   Cookies: {e}")
+        print(f"   Cookies nicht verfügbar: {e}")
         return []
 
 
