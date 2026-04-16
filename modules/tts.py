@@ -6,42 +6,59 @@ import re
 import edge_tts
 from elevenlabs import ElevenLabs
 
-# ── Stimmen-Konfiguration ─────────────────────────────────────────────────────
+# ── Zwei Stimmen je nach Thema ────────────────────────────────────────────────
 #
-# Edge TTS (kostenlos, kein API-Key nötig):
-#   de-DE-FlorianMultilingualNeural   – männlich, sehr natürlich  ← Standard
-#   de-DE-SeraphinaMultilingualNeural – weiblich, natürlich
+#  STIMME 1 – NARRATOR  (Wissenschaft, Geschichte, Weltall, Technik …)
+#    Ruhig, autoritär, Doku-Stil
+#    ElevenLabs: Marcus  (lNDVWnlRYtLKcBKNFtRM)
+#    Edge TTS:   de-DE-FlorianMultilingualNeural
 #
-# ElevenLabs (ELEVENLABS_API_KEY benötigt):
-#   Stimme über Railway-Variable ELEVENLABS_VOICE_ID wählen:
-#     lNDVWnlRYtLKcBKNFtRM  – Marcus   (Deutsch/EN, ruhig-autoritär)  ← Standard
-#     TX3LPaxmHKxFdv7VOQHJ  – Liam     (EN, Social Media Creator)
-#     pNInz6obpgDQGcFmaJgB  – Adam     (EN/DE, tief & warm)
-#     onwK4e9ZLuTAKqWW03F9  – Daniel   (EN, flüssige Narration)
-#     XrExE9yKIg1WjnnlVkGX  – Matilda  (DE/EN, freundlich-energisch)
+#  STIMME 2 – CREATOR   (Pop-Kultur, Tiere, Essen, Psychologie …)
+#    Energetisch, jung, Social-Media-Stil
+#    ElevenLabs: Liam    (TX3LPaxmHKxFdv7VOQHJ)
+#    Edge TTS:   de-DE-SeraphinaMultilingualNeural
 #
-# → In Railway Variables setzen: ELEVENLABS_VOICE_ID=<gewünschte ID>
 # ─────────────────────────────────────────────────────────────────────────────
 
-DEFAULT_EDGE_VOICE  = os.environ.get("EDGE_TTS_VOICE", "de-DE-FlorianMultilingualNeural")
-ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "lNDVWnlRYtLKcBKNFtRM")
-ELEVENLABS_MODEL    = "eleven_multilingual_v2"
+_VOICE_NARRATOR = {
+    "elevenlabs_id": os.environ.get("ELEVENLABS_VOICE_NARRATOR", "lNDVWnlRYtLKcBKNFtRM"),  # Marcus
+    "edge_tts":      "de-DE-FlorianMultilingualNeural",
+    "label":         "Narrator",
+}
+
+_VOICE_CREATOR = {
+    "elevenlabs_id": os.environ.get("ELEVENLABS_VOICE_CREATOR", "TX3LPaxmHKxFdv7VOQHJ"),   # Liam
+    "edge_tts":      "de-DE-SeraphinaMultilingualNeural",
+    "label":         "Creator",
+}
+
+# Themen → Creator-Stimme (alle anderen → Narrator)
+_CREATOR_TOPICS = {
+    "pop culture", "popkultur", "pop-kultur",
+    "animals", "tiere",
+    "food", "essen",
+    "psychology", "psychologie",
+}
+
+ELEVENLABS_MODEL = "eleven_multilingual_v2"
+
+
+def _pick_voice(topic: str) -> dict:
+    """Wählt Stimme basierend auf Thema."""
+    t = (topic or "").lower().strip()
+    return _VOICE_CREATOR if t in _CREATOR_TOPICS else _VOICE_NARRATOR
 
 
 # ── ElevenLabs ────────────────────────────────────────────────────────────────
 
 def _chars_to_words(alignment: dict) -> list[dict]:
-    """
-    Konvertiert ElevenLabs Zeichen-Timings zu Wort-Timings.
-    alignment: {"characters": [...], "character_start_times_seconds": [...], "character_end_times_seconds": [...]}
-    """
-    chars      = alignment["characters"]
-    starts     = alignment["character_start_times_seconds"]
-    ends       = alignment["character_end_times_seconds"]
+    chars  = alignment["characters"]
+    starts = alignment["character_start_times_seconds"]
+    ends   = alignment["character_end_times_seconds"]
 
     word_timings = []
-    current_word  = ""
-    word_start    = None
+    current_word = ""
+    word_start   = None
 
     for char, start, end in zip(chars, starts, ends):
         if char in (" ", "\n", "\t"):
@@ -60,15 +77,14 @@ def _chars_to_words(alignment: dict) -> list[dict]:
     return word_timings
 
 
-def _tts_elevenlabs(text: str, audio_path: str, api_key: str) -> list[dict]:
+def _tts_elevenlabs(text: str, audio_path: str, api_key: str, voice: dict) -> list[dict]:
     client   = ElevenLabs(api_key=api_key)
     response = client.text_to_speech.convert_with_timestamps(
-        voice_id=ELEVENLABS_VOICE_ID,
+        voice_id=voice["elevenlabs_id"],
         text=text,
         model_id=ELEVENLABS_MODEL,
         output_format="mp3_44100_192",
     )
-    # Audio speichern
     audio_bytes = base64.b64decode(response.audio_base_64)
     with open(audio_path, "wb") as f:
         f.write(audio_bytes)
@@ -83,8 +99,8 @@ def _tts_elevenlabs(text: str, audio_path: str, api_key: str) -> list[dict]:
 
 # ── Edge TTS Fallback ─────────────────────────────────────────────────────────
 
-async def _tts_edge_async(text: str, audio_path: str, voice: str) -> list[dict]:
-    communicate  = edge_tts.Communicate(text, voice, boundary="WordBoundary")
+async def _tts_edge_async(text: str, audio_path: str, voice_name: str) -> list[dict]:
+    communicate  = edge_tts.Communicate(text, voice_name, boundary="WordBoundary")
     word_timings = []
     with open(audio_path, "wb") as f:
         async for chunk in communicate.stream():
@@ -99,23 +115,27 @@ async def _tts_edge_async(text: str, audio_path: str, voice: str) -> list[dict]:
 
 # ── Öffentliche API ───────────────────────────────────────────────────────────
 
-def text_to_speech(text: str, output_path: str) -> tuple[str, list[dict]]:
+def text_to_speech(text: str, output_path: str, topic: str = "") -> tuple[str, list[dict]]:
     """
     Erstellt Audio mit Word-Timings.
+    Wählt Stimme je nach Thema:
+      - Wissenschaft/Geschichte/Weltall/… → Narrator (ruhig, autoritär)
+      - Pop-Kultur/Tiere/Essen/Psychologie → Creator (energetisch, jung)
     Nutzt ElevenLabs wenn ELEVENLABS_API_KEY gesetzt, sonst Edge TTS.
-    Gibt (audio_path, word_timings) zurück.
     """
+    voice  = _pick_voice(topic)
     el_key = os.environ.get("ELEVENLABS_API_KEY", "").strip()
+
     if el_key:
         try:
-            print(f"   ElevenLabs TTS: Voice {ELEVENLABS_VOICE_ID} / {ELEVENLABS_MODEL}")
-            timings = _tts_elevenlabs(text, output_path, el_key)
+            print(f"   ElevenLabs TTS [{voice['label']}]: {voice['elevenlabs_id']}")
+            timings = _tts_elevenlabs(text, output_path, el_key, voice)
             return output_path, timings
         except Exception as e:
             print(f"   ElevenLabs Fehler: {e} — nutze Edge TTS als Fallback")
 
-    print(f"   Edge TTS: {DEFAULT_EDGE_VOICE}")
-    timings = asyncio.run(_tts_edge_async(text, output_path, DEFAULT_EDGE_VOICE))
+    print(f"   Edge TTS [{voice['label']}]: {voice['edge_tts']}")
+    timings = asyncio.run(_tts_edge_async(text, output_path, voice["edge_tts"]))
     return output_path, timings
 
 

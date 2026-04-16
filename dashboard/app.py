@@ -152,7 +152,7 @@ def _run_generation(job_id: str, topic: str | None, long: bool):
 
         upd("Erstelle Voiceover …", 30)
         tts_text = f"{fact_data['title']}. {fact_data['fact']}"
-        _, word_timings = text_to_speech(tts_text, str(audio_path))
+        _, word_timings = text_to_speech(tts_text, str(audio_path), topic=topic)
 
         upd("Erstelle Video …", 55)
         visual_query = fact_data.get("visual_query", "").strip()
