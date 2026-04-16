@@ -3,7 +3,7 @@
 Synchronisiert lokale Analytics-Daten zu Railway.
 Führe dieses Skript auf deinem Mac aus:
 
-    python sync_to_railway.py
+    python3 sync_to_railway.py
 
 Es liest den lokalen Analytics-Cache und pusht ihn zur Railway-App.
 """

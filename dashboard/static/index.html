@@ -641,7 +641,7 @@
       <h2>TikTok Performance</h2>
       <p>Stats direkt aus deinem Creator Center</p>
       <div id="cloudModeBadge" style="display:none;margin-top:6px;font-size:11px;background:#1e1e30;border:1px solid #2e2e4a;color:#aaa;border-radius:6px;padding:4px 10px;display:inline-flex;align-items:center;gap:5px">
-        ☁️ <span>Cloud-Modus — sync über <code style="color:#ff6b35;font-size:11px">python sync_to_railway.py</code></span>
+        ☁️ <span>Cloud-Modus — sync über <code style="color:#ff6b35;font-size:11px">python3 sync_to_railway.py</code></span>
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:14px">
@@ -1613,9 +1613,9 @@ async function loadAnalytics(silent = false) {
     const badge = document.getElementById('cloudModeBadge');
     if (badge) badge.style.display = 'inline-flex';
     const emptyText = document.getElementById('analyticsEmptyText');
-    if (emptyText) emptyText.textContent = 'Cloud-Modus: Führe python sync_to_railway.py auf deinem Mac aus um Analytics zu synchronisieren.';
+    if (emptyText) emptyText.textContent = 'Cloud-Modus: Führe python3 sync_to_railway.py auf deinem Mac aus um Analytics zu synchronisieren.';
     const btn = document.getElementById('refreshBtn');
-    if (btn) { btn.textContent = '☁️ Sync-Anleitung'; btn.onclick = () => alert('Führe auf deinem Mac aus:\n\npython sync_to_railway.py\n\nDas Skript fragt nach deiner Railway-URL und pusht die lokalen Analytics dorthin.'); }
+    if (btn) { btn.textContent = '☁️ Sync-Anleitung'; btn.onclick = () => alert('Führe auf deinem Mac aus:\n\npython3 sync_to_railway.py\n\nDas Skript fragt nach deiner Railway-URL und pusht die lokalen Analytics dorthin.'); }
   }
 
   // Update last_updated from API
