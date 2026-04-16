@@ -456,9 +456,9 @@ def _analytics_auto_refresh_loop():
 
 # ── Upload-Warteschlange ──────────────────────────────────────────────────────
 
-QUEUE_FILE    = ROOT / "upload_queue.json"
-SCHEDULE_FILE = ROOT / "schedule.json"
-ANALYTICS_HISTORY_FILE = Path(__file__).parent / "analytics_history.json"
+QUEUE_FILE    = OUTPUT_DIR / "upload_queue.json"
+SCHEDULE_FILE = OUTPUT_DIR / "schedule.json"
+ANALYTICS_HISTORY_FILE = OUTPUT_DIR / "analytics_history.json"
 
 upload_queue: list[dict] = []   # [{filename, caption, scheduled_time, status}]
 _queue_lock = threading.Lock()
