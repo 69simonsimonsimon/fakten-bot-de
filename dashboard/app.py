@@ -1058,6 +1058,7 @@ if __name__ == "__main__":
     threading.Thread(target=_auto_fill_cache,            daemon=True).start()
     threading.Thread(target=_analytics_auto_refresh_loop, daemon=True).start()
 
-    logger.info("syncin Dashboard gestartet → http://localhost:8000")
-    print("\n  syncin Dashboard  →  http://localhost:8000\n")
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="warning")
+    port = int(os.environ.get("PORT", 8000))
+    logger.info(f"syncin Dashboard gestartet → http://localhost:{port}")
+    print(f"\n  syncin Dashboard  →  http://localhost:{port}\n")
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
