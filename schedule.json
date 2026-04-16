@@ -1,0 +1,21 @@
+{
+  "enabled": true,
+  "recovery_until": null,
+  "recovery_reason": "",
+  "slots": [
+    {
+      "time": "09:00",
+      "mode": "auto",
+      "topic": "",
+      "filename": "",
+      "long": false
+    },
+    {
+      "time": "18:00",
+      "mode": "auto",
+      "topic": "",
+      "filename": "",
+      "long": false
+    }
+  ]
+}
