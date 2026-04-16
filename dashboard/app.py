@@ -453,9 +453,11 @@ def _run_analytics():
 def _analytics_auto_refresh_loop():
     """Aktualisiert Analytics automatisch alle 15 Minuten im Hintergrund."""
     global _analytics_last_refresh
-    if IS_RAILWAY:
-        logger.info("Cloud-Modus: Analytics-Auto-Refresh deaktiviert (kein TikTok-Login verfügbar)")
+    if IS_RAILWAY and not os.environ.get("TIKTOK_COOKIES", "").strip():
+        logger.info("Cloud-Modus: Analytics-Auto-Refresh deaktiviert (kein TIKTOK_COOKIES gesetzt)")
         return
+    if IS_RAILWAY:
+        logger.info("Cloud-Modus: Analytics-Auto-Refresh aktiv (TIKTOK_COOKIES vorhanden)")
     time.sleep(90)  # Kurz warten bis Dashboard bereit ist
     while True:
         try:
