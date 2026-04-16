@@ -1,10 +1,10 @@
 [phases.setup]
-nixPkgs = ["python312", "ffmpeg", "chromium", "noto-fonts", "noto-fonts-cjk-sans"]
+nixPkgs = ["python312", "ffmpeg", "fontconfig", "freetype", "libGL", "libGLU", "glib"]
 
 [phases.install]
 cmds = [
   "pip install -r requirements.txt",
-  "python -m playwright install chromium"
+  "python -m playwright install chromium --with-deps"
 ]
 
 [start]

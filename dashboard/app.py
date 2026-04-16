@@ -53,11 +53,15 @@ def notify(title: str, message: str):
     except Exception:
         pass
 
-from fact_generator import generate_fact
-from tts import text_to_speech
-from video_creator import create_video
-from tiktok_uploader_zernio import upload_video_browser
-from analytics_scraper import fetch_analytics, load_cached
+try:
+    from fact_generator import generate_fact
+    from tts import text_to_speech
+    from video_creator import create_video
+    from tiktok_uploader_zernio import upload_video_browser
+    from analytics_scraper import fetch_analytics, load_cached
+except Exception as _import_err:
+    logger.error(f"Import-Fehler beim Start: {_import_err}")
+    raise
 
 OUTPUT_DIR = ROOT / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
