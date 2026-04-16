@@ -26,3 +26,4 @@ upload_queue.json
 # Python venv
 venv/
 .venv/
+.railway_url

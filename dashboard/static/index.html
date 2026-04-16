@@ -640,6 +640,9 @@
     <div>
       <h2>TikTok Performance</h2>
       <p>Stats direkt aus deinem Creator Center</p>
+      <div id="cloudModeBadge" style="display:none;margin-top:6px;font-size:11px;background:#1e1e30;border:1px solid #2e2e4a;color:#aaa;border-radius:6px;padding:4px 10px;display:inline-flex;align-items:center;gap:5px">
+        ☁️ <span>Cloud-Modus — sync über <code style="color:#ff6b35;font-size:11px">python sync_to_railway.py</code></span>
+      </div>
     </div>
     <div style="display:flex;align-items:center;gap:14px">
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px">
@@ -657,7 +660,7 @@
   <div id="analyticsContent">
     <div class="analytics-empty">
       <h3>Noch keine Daten</h3>
-      <p>Klick auf "Stats abrufen" — ein Browser öffnet sich kurz und liest deine TikTok-Stats aus.</p>
+      <p id="analyticsEmptyText">Klick auf "Stats abrufen" — ein Browser öffnet sich kurz und liest deine TikTok-Stats aus.</p>
       <button class="btn btn-primary" onclick="refreshAnalytics()">Stats abrufen</button>
     </div>
   </div>
@@ -1604,6 +1607,16 @@ async function loadAnalytics(silent = false) {
   }
   const res  = await fetch('/api/analytics');
   const json = await res.json();
+
+  // Cloud mode: show badge + update empty state text
+  if (json.is_railway) {
+    const badge = document.getElementById('cloudModeBadge');
+    if (badge) badge.style.display = 'inline-flex';
+    const emptyText = document.getElementById('analyticsEmptyText');
+    if (emptyText) emptyText.textContent = 'Cloud-Modus: Führe python sync_to_railway.py auf deinem Mac aus um Analytics zu synchronisieren.';
+    const btn = document.getElementById('refreshBtn');
+    if (btn) { btn.textContent = '☁️ Sync-Anleitung'; btn.onclick = () => alert('Führe auf deinem Mac aus:\n\npython sync_to_railway.py\n\nDas Skript fragt nach deiner Railway-URL und pusht die lokalen Analytics dorthin.'); }
+  }
 
   // Update last_updated from API
   if (json.last_updated) {

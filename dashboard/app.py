@@ -30,6 +30,8 @@ sys.path.insert(0, str(ROOT / "modules"))
 from dotenv import load_dotenv
 load_dotenv(ROOT / ".env", override=True)
 
+IS_RAILWAY = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_PROJECT_ID"))
+
 # ── Logging ───────────────────────────────────────────────────────────────────
 LOG_DIR  = ROOT / "logs"
 LOG_DIR.mkdir(exist_ok=True)
@@ -64,8 +66,8 @@ except Exception as _import_err:
     logger.error(f"Import-Fehler beim Start: {_import_err}")
     raise
 
-OUTPUT_DIR = ROOT / "output"
-OUTPUT_DIR.mkdir(exist_ok=True)
+OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", str(ROOT / "output")))
+OUTPUT_DIR.mkdir(exist_ok=True, parents=True)
 
 TOPICS = [
     "science", "history", "nature", "technology", "space",
@@ -365,6 +367,8 @@ _ANALYTICS_AUTO_INTERVAL = 15 * 60  # 15 Minuten
 def get_analytics(refresh: bool = False):
     global _analytics_last_refresh
     if refresh:
+        if IS_RAILWAY:
+            return {"status": "cloud_mode", "message": "Führe sync_to_railway.py auf deinem Mac aus"}
         analytics_job["status"] = "running"
         analytics_job["message"] = "Öffne Creator Center..."
         def _refresh_and_update():
@@ -381,11 +385,30 @@ def get_analytics(refresh: bool = False):
         "data": data,
         "count": len(data),
         "last_updated": _analytics_last_refresh.isoformat() if _analytics_last_refresh else None,
+        "is_railway": IS_RAILWAY,
     }
 
 @app.get("/api/analytics/status")
 def analytics_status():
     return analytics_job
+
+
+@app.get("/api/config")
+def get_config():
+    """Gibt Umgebungs-Konfiguration zurück (Cloud vs. Lokal)."""
+    return {"is_railway": IS_RAILWAY, "output_dir": str(OUTPUT_DIR)}
+
+
+@app.post("/api/analytics/sync-cache")
+def sync_analytics_cache(data: list):
+    """Empfängt Analytics-Cache von lokalem Mac und speichert ihn."""
+    from analytics_scraper import CACHE_FILE as _CACHE_FILE
+    global _analytics_last_refresh
+    _CACHE_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    _analytics_last_refresh = datetime.now()
+    _append_analytics_history(data)
+    logger.info(f"Analytics-Cache synchronisiert: {len(data)} Videos vom lokalen Mac")
+    return {"status": "ok", "count": len(data)}
 
 def _run_analytics():
     try:
@@ -414,6 +437,9 @@ def _run_analytics():
 def _analytics_auto_refresh_loop():
     """Aktualisiert Analytics automatisch alle 15 Minuten im Hintergrund."""
     global _analytics_last_refresh
+    if IS_RAILWAY:
+        logger.info("Cloud-Modus: Analytics-Auto-Refresh deaktiviert (kein TikTok-Login verfügbar)")
+        return
     time.sleep(90)  # Kurz warten bis Dashboard bereit ist
     while True:
         try:
