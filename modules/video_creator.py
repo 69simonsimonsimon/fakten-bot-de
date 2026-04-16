@@ -23,8 +23,43 @@ from PIL import Image, ImageDraw, ImageFont
 WIDTH  = 1080
 HEIGHT = 1920
 
-BOLD    = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
-REGULAR = "/System/Library/Fonts/Supplemental/Arial.ttf"
+def _resolve_font(mac_path: str, linux_candidates: list) -> str:
+    """Gibt den korrekten Font-Pfad zurück — Mac oder Linux (Railway)."""
+    if Path(mac_path).exists():
+        return mac_path
+    for candidate in linux_candidates:
+        if Path(candidate).exists():
+            return candidate
+    # Letzter Ausweg: fc-list durchsuchen
+    try:
+        import subprocess
+        out = subprocess.check_output(["fc-list", "--format=%{file}\n"], text=True, timeout=5)
+        for line in out.splitlines():
+            line = line.strip()
+            if line and any(n in line for n in ["Liberation", "DejaVu", "Arial", "Helvetica"]):
+                return line
+    except Exception:
+        pass
+    return mac_path  # Fallback (wirft später einen klaren Fehler)
+
+BOLD = _resolve_font(
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    [
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+    ],
+)
+REGULAR = _resolve_font(
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+    [
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+    ],
+)
 
 CACHE_DIR = Path(__file__).parent.parent / "assets" / "backgrounds"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
