@@ -61,7 +61,8 @@ REGULAR = _resolve_font(
     ],
 )
 
-CACHE_DIR = Path(__file__).parent.parent / "assets" / "backgrounds"
+_backgrounds_env = os.environ.get("BACKGROUNDS_DIR", "")
+CACHE_DIR = Path(_backgrounds_env) if _backgrounds_env else Path(__file__).parent.parent / "assets" / "backgrounds"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 MUSIC_DIR = Path(__file__).parent.parent / "assets" / "music"

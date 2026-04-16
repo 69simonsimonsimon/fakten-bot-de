@@ -1046,8 +1046,14 @@ def _auto_fill_cache():
     Wird beim Start einmalig im Hintergrund ausgeführt.
     Füllt nur fehlende Cache-Einträge auf — bereits vorhandene Videos werden
     NICHT neu heruntergeladen. Kein manueller Eingriff nötig.
+    Auf Railway: sequenziell (kein paralleler Download) um RAM-Spikes zu vermeiden.
     """
     import os
+
+    # Auf Railway: kurze Verzögerung damit der Server erst hochfährt
+    if IS_RAILWAY:
+        time.sleep(30)
+
     try:
         from video_creator import _fetch_pexels_video, CACHE_DIR, TOPIC_QUERIES, PER_QUERY
         api_key = os.environ.get("PEXELS_API_KEY", "")
@@ -1074,6 +1080,10 @@ def _auto_fill_cache():
         logger.info(f"Cache-Startup: {len(missing_queries)} Sub-Queries unvollständig — lade nach…")
 
         for sub_q, existing in missing_queries:
+            # Auf Railway: zwischen Downloads kurz pausieren damit Video-Generierung
+            # nicht mit dem Cache-Download um Ressourcen konkurriert
+            if IS_RAILWAY:
+                time.sleep(2)
             try:
                 _fetch_pexels_video(sub_q, api_key, max_videos=PER_QUERY)
             except Exception as e:
