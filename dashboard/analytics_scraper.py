@@ -16,13 +16,41 @@ OUTPUT_DIR    = Path(__file__).parent.parent / "output"
 
 
 def _get_chrome_cookies() -> list[dict]:
-    # Auf Cloud/Railway gibt es keinen Chrome — graceful fallback
+    """
+    Liefert TikTok-Cookies für Playwright.
+    Reihenfolge:
+      1. TIKTOK_COOKIES env-Variable (Railway & lokal als Fallback)
+      2. browser_cookie3 aus lokalem Chrome (nur lokal)
+    """
+    import os
+
+    # 1. Env-Variable (Railway)
+    raw = os.environ.get("TIKTOK_COOKIES", "").strip()
+    if raw:
+        try:
+            cookies = json.loads(raw)
+            if cookies:
+                print(f"   {len(cookies)} Cookies aus TIKTOK_COOKIES env geladen")
+                return cookies
+        except Exception as e:
+            print(f"   ⚠️  TIKTOK_COOKIES konnte nicht geparst werden: {e}")
+
+    # 2. Lokaler Chrome via browser_cookie3
     try:
-        import browser_cookie3  # optional, nicht auf Railway verfügbar
+        import browser_cookie3
         jar = browser_cookie3.chrome(domain_name=".tiktok.com")
-        return [{"name": c.name, "value": c.value,
-                 "domain": c.domain if c.domain.startswith(".") else "." + c.domain,
-                 "path": c.path or "/"} for c in jar]
+        cookies = [
+            {
+                "name":   c.name,
+                "value":  c.value,
+                "domain": c.domain if c.domain.startswith(".") else "." + c.domain,
+                "path":   c.path or "/",
+            }
+            for c in jar
+        ]
+        if cookies:
+            print(f"   {len(cookies)} Cookies aus lokalem Chrome geladen")
+        return cookies
     except Exception:
         return []
 
