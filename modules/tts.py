@@ -6,9 +6,26 @@ import re
 import edge_tts
 from elevenlabs import ElevenLabs
 
-DEFAULT_EDGE_VOICE    = "de-DE-SeraphinaMultilingualNeural"
-ELEVENLABS_VOICE_ID   = "TX3LPaxmHKxFdv7VOQHJ"   # Liam – Energetic, Social Media Creator
-ELEVENLABS_MODEL      = "eleven_multilingual_v2"
+# ── Stimmen-Konfiguration ─────────────────────────────────────────────────────
+#
+# Edge TTS (kostenlos, kein API-Key nötig):
+#   de-DE-FlorianMultilingualNeural   – männlich, sehr natürlich  ← Standard
+#   de-DE-SeraphinaMultilingualNeural – weiblich, natürlich
+#
+# ElevenLabs (ELEVENLABS_API_KEY benötigt):
+#   Stimme über Railway-Variable ELEVENLABS_VOICE_ID wählen:
+#     lNDVWnlRYtLKcBKNFtRM  – Marcus   (Deutsch/EN, ruhig-autoritär)  ← Standard
+#     TX3LPaxmHKxFdv7VOQHJ  – Liam     (EN, Social Media Creator)
+#     pNInz6obpgDQGcFmaJgB  – Adam     (EN/DE, tief & warm)
+#     onwK4e9ZLuTAKqWW03F9  – Daniel   (EN, flüssige Narration)
+#     XrExE9yKIg1WjnnlVkGX  – Matilda  (DE/EN, freundlich-energisch)
+#
+# → In Railway Variables setzen: ELEVENLABS_VOICE_ID=<gewünschte ID>
+# ─────────────────────────────────────────────────────────────────────────────
+
+DEFAULT_EDGE_VOICE  = os.environ.get("EDGE_TTS_VOICE", "de-DE-FlorianMultilingualNeural")
+ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "lNDVWnlRYtLKcBKNFtRM")
+ELEVENLABS_MODEL    = "eleven_multilingual_v2"
 
 
 # ── ElevenLabs ────────────────────────────────────────────────────────────────
@@ -91,11 +108,13 @@ def text_to_speech(text: str, output_path: str) -> tuple[str, list[dict]]:
     el_key = os.environ.get("ELEVENLABS_API_KEY", "").strip()
     if el_key:
         try:
+            print(f"   ElevenLabs TTS: Voice {ELEVENLABS_VOICE_ID} / {ELEVENLABS_MODEL}")
             timings = _tts_elevenlabs(text, output_path, el_key)
             return output_path, timings
         except Exception as e:
             print(f"   ElevenLabs Fehler: {e} — nutze Edge TTS als Fallback")
 
+    print(f"   Edge TTS: {DEFAULT_EDGE_VOICE}")
     timings = asyncio.run(_tts_edge_async(text, output_path, DEFAULT_EDGE_VOICE))
     return output_path, timings
 
