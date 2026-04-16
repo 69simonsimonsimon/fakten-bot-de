@@ -6,6 +6,7 @@ Dann im Browser: http://localhost:8000
 
 import json
 import logging
+import os
 import random
 import subprocess
 import sys

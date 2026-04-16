@@ -1,3 +1,7 @@
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
 [deploy]
 startCommand = "python dashboard/app.py"
 healthcheckPath = "/health"
