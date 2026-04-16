@@ -25,13 +25,16 @@ def _get_base_hashtags() -> list[str]:
     random.shuffle(pool)
     return _HASHTAG_CORE + pool[:6]   # 3 Core + 6 zufällige = 9 Base-Tags
 
-HISTORY_FILE = Path(__file__).parent.parent / "output" / "fact_history.json"
+# Output-Verzeichnis respektiert OUTPUT_DIR env-Variable (Railway Volume = /data/output)
+_OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", str(Path(__file__).parent.parent / "output")))
+HISTORY_FILE = _OUTPUT_DIR / "fact_history.json"
 
 
 def _load_history() -> list[dict]:
     """
     Lädt alle bisherigen Fakten als Liste von {title, summary}.
-    Liest aus der History-Datei UND aus allen vorhandenen JSON-Metadaten.
+    Liest aus der History-Datei UND aus allen hochgeladenen JSON-Metadaten.
+    Nur Videos mit "uploaded": true werden als gesperrt betrachtet.
     """
     entries: dict[str, str] = {}  # title → summary
 
@@ -50,13 +53,14 @@ def _load_history() -> list[dict]:
         except Exception:
             pass
 
-    # 2. Alle JSON-Metadaten im Output-Ordner
-    output_dir = HISTORY_FILE.parent
-    for jf in output_dir.glob("*.json"):
+    # 2. Nur hochgeladene JSON-Metadaten (uploaded: true) — damit nur TikTok-Posts gesperrt sind
+    for jf in _OUTPUT_DIR.glob("*.json"):
         if jf.name == "fact_history.json":
             continue
         try:
             d = json.loads(jf.read_text(encoding="utf-8"))
+            if not d.get("uploaded", False):
+                continue  # Nur hochgeladene Videos berücksichtigen
             title = d.get("title", "").strip()
             # Dateinamen-artige Einträge überspringen (z.B. "video_20260415_095726")
             if title and not title.startswith("video_") and len(title) >= 8:
