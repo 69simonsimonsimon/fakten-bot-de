@@ -1046,13 +1046,15 @@ def _auto_fill_cache():
     Wird beim Start einmalig im Hintergrund ausgeführt.
     Füllt nur fehlende Cache-Einträge auf — bereits vorhandene Videos werden
     NICHT neu heruntergeladen. Kein manueller Eingriff nötig.
-    Auf Railway: sequenziell (kein paralleler Download) um RAM-Spikes zu vermeiden.
+    Auf Railway: komplett deaktiviert — Videos werden on-demand beim Generieren geladen
+    und bleiben dank Volume persistent gespeichert.
     """
     import os
 
-    # Auf Railway: kurze Verzögerung damit der Server erst hochfährt
+    # Auf Railway: kein Vorabladen — verhindert Download-Sturm beim Start
     if IS_RAILWAY:
-        time.sleep(30)
+        logger.info("Cache-Startup: Railway-Modus — kein Vorabladen (on-demand bei Generierung)")
+        return
 
     try:
         from video_creator import _fetch_pexels_video, CACHE_DIR, TOPIC_QUERIES, PER_QUERY

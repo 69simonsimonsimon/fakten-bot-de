@@ -575,12 +575,12 @@ def create_video(
     # Rendern
     video = CompositeVideoClip(clips, size=(WIDTH, HEIGHT)).with_audio(mixed_audio)
     video.write_videofile(
-        output_path, fps=60, codec="libx264", audio_codec="aac", logger=None,
+        output_path, fps=30, codec="libx264", audio_codec="aac", logger=None,
         ffmpeg_params=[
-            "-preset", "slow",       # Beste Kompression — ~3× langsamer als veryfast, sichtbar schärfer
-            "-crf", "16",            # Qualität: 0=perfekt, 23=Standard → 16=sehr hohe Qualität
-            "-profile:v", "high",    # H.264 High Profile — maximale Qualität
-            "-level", "4.2",         # Kompatibel mit 1080p60
+            "-preset", "veryfast",   # Schnell kodieren — TikTok komprimiert sowieso nach
+            "-crf", "18",            # Qualität: 0=perfekt, 23=Standard → 18=hohe Qualität
+            "-profile:v", "high",    # H.264 High Profile
+            "-level", "4.0",         # Kompatibel mit 1080p30
             "-pix_fmt", "yuv420p",   # TikTok-Anforderung
             "-b:a", "192k",          # Audio 192kbps
             "-threads", "0",
