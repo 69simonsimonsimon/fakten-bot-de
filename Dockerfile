@@ -37,8 +37,8 @@ COPY . .
 # Logs- und Output-Verzeichnisse anlegen
 RUN mkdir -p logs output
 
-# Railway injiziert PORT automatisch (Standard: 8080)
-# App liest os.environ["PORT"] und bindet daran
+# Railway setzt PORT automatisch — default 8080
+ENV PORT=8080
 EXPOSE 8080
 
 CMD ["python", "dashboard/app.py"]

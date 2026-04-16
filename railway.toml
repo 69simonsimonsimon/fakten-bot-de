@@ -4,7 +4,5 @@ dockerfilePath = "Dockerfile"
 
 [deploy]
 startCommand = "python dashboard/app.py"
-healthcheckPath = "/health"
-healthcheckTimeout = 120
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
