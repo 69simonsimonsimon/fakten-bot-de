@@ -8,11 +8,13 @@ import json
 import re
 from pathlib import Path
 
+import os
+
 from playwright.async_api import async_playwright
 
 ANALYTICS_URL = "https://www.tiktok.com/tiktokstudio/content"
-CACHE_FILE    = Path(__file__).parent / "analytics_cache.json"
-OUTPUT_DIR    = Path(__file__).parent.parent / "output"
+OUTPUT_DIR    = Path(os.environ.get("OUTPUT_DIR", str(Path(__file__).parent.parent / "output")))
+CACHE_FILE    = OUTPUT_DIR / "analytics_cache.json"
 
 
 def _get_chrome_cookies() -> list[dict]:

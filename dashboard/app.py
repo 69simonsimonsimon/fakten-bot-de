@@ -33,7 +33,8 @@ load_dotenv(ROOT / ".env", override=True)
 IS_RAILWAY = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_PROJECT_ID"))
 
 # ── Logging ───────────────────────────────────────────────────────────────────
-LOG_DIR  = ROOT / "logs"
+_log_base = Path(os.environ.get("OUTPUT_DIR", str(ROOT / "output")))
+LOG_DIR   = _log_base / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 LOG_FILE = LOG_DIR / "bot.log"
 

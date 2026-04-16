@@ -4,26 +4,75 @@ import os
 import re
 from pathlib import Path
 
-# Größerer Pool — wird pro Video zufällig rotiert (kein fester Hashtag-Fingerabdruck)
-_HASHTAG_POOL = [
-    # Reach
-    "#fyp", "#foryou", "#foryoupage", "#viral", "#trending", "#explore",
-    # Deutsch
-    "#tiktokdeutsch", "#deutsch", "#deutschtiktok", "#germantiktok", "#österreich", "#schweiz",
-    # Wissen
-    "#fakten", "#wusstest", "#lernen", "#bildung", "#wissen", "#interessant",
+# ── Modell ────────────────────────────────────────────────────────────────────
+# Über Railway-Variable ANTHROPIC_MODEL überschreibbar (z.B. claude-opus-4-6
+# für maximale Qualität). Standard: Sonnet — schneller, günstiger, gleiche
+# Qualität für kurze Fakten-Texte.
+_CLAUDE_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
+
+# ── Hashtag-Pools ─────────────────────────────────────────────────────────────
+# Core-Tags kommen bei jedem Video dazu.
+# Topic-Tags: 3 themenspezifische pro Video (rotierend, kein fester Fingerabdruck).
+# Reach-Tags: 2 zufällige aus dem allgemeinen Pool.
+
+_HASHTAG_CORE = ["#fyp", "#tiktokdeutsch", "#fakten"]
+
+_TOPIC_HASHTAGS: dict[str, list[str]] = {
+    "science":     ["#wissenschaft", "#forscher", "#experiment", "#entdeckung",
+                    "#biologie", "#chemie", "#physik", "#naturwissenschaft"],
+    "history":     ["#geschichte", "#historisch", "#altertum", "#mittelalter",
+                    "#archäologie", "#geschichtsfakten", "#antike"],
+    "space":       ["#weltall", "#nasa", "#universum", "#planet", "#astronaut",
+                    "#astronomie", "#kosmos", "#galaxie"],
+    "technology":  ["#technologie", "#innovation", "#zukunft", "#ki", "#digital",
+                    "#tech", "#künstlicheintelligenz", "#gadgets"],
+    "animals":     ["#tiere", "#wildlife", "#tierreich", "#tierfakten",
+                    "#tierliebe", "#natur", "#tierwelt"],
+    "psychology":  ["#psychologie", "#mentalhealth", "#gehirn", "#gedanken",
+                    "#bewusstsein", "#verhalten", "#psychofakten"],
+    "food":        ["#essen", "#foodfacts", "#küche", "#kochen",
+                    "#ernährung", "#food", "#lebensmittel"],
+    "geography":   ["#geographie", "#welt", "#länder", "#reisen",
+                    "#erdkunde", "#kontinente", "#länderfakten"],
+    "human body":  ["#körper", "#gesundheit", "#medizin", "#anatomie",
+                    "#biologie", "#körperfakten", "#wissenschaft"],
+    "pop culture": ["#popkultur", "#trending", "#entertainment", "#kultur",
+                    "#musik", "#film", "#serie"],
+    "nature":      ["#natur", "#erde", "#umwelt", "#naturwunder",
+                    "#naturkunde", "#ökologie", "#naturfakten"],
+}
+
+_HASHTAG_REACH = [
+    "#viral", "#explore", "#foryou", "#foryoupage",
+    "#deutsch", "#deutschtiktok", "#wissen", "#interessant",
     "#überraschend", "#krass", "#unglaublich", "#faktendestages",
     "#wissenswert", "#lernenmittiktok", "#didyouknow", "#funfact",
 ]
-_HASHTAG_CORE = ["#fyp", "#tiktokdeutsch", "#fakten"]   # immer dabei
 
 
-def _get_base_hashtags() -> list[str]:
-    """Wählt pro Video eine zufällige Kombination aus dem Pool — kein fester Fingerabdruck."""
+def _get_base_hashtags(topic: str = "") -> list[str]:
+    """
+    Wählt pro Video: 3 Core-Tags + 3 themenspezifische + 2 zufällige Reach-Tags.
+    Kein fester Fingerabdruck — rotiert innerhalb jedes Pools.
+    """
     import random
-    pool = [t for t in _HASHTAG_POOL if t not in _HASHTAG_CORE]
-    random.shuffle(pool)
-    return _HASHTAG_CORE + pool[:6]   # 3 Core + 6 zufällige = 9 Base-Tags
+    t = topic.lower().strip()
+
+    # Topic-spezifische Tags (rotierend)
+    topic_pool = _TOPIC_HASHTAGS.get(t, [])
+    if not topic_pool:
+        # Fallback: allgemeine Wissens-Tags
+        topic_pool = ["#wissen", "#bildung", "#lernen", "#lernenmittiktok",
+                      "#wissenswert", "#faktendestages"]
+    random.shuffle(topic_pool)
+    topic_tags = topic_pool[:3]
+
+    # 2 zufällige Reach-Tags
+    reach_pool = [r for r in _HASHTAG_REACH if r not in _HASHTAG_CORE and r not in topic_tags]
+    random.shuffle(reach_pool)
+    reach_tags = reach_pool[:2]
+
+    return _HASHTAG_CORE + topic_tags + reach_tags   # 3 + 3 + 2 = 8 Base-Tags
 
 # Output-Verzeichnis respektiert OUTPUT_DIR env-Variable (Railway Volume = /data/output)
 _OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", str(Path(__file__).parent.parent / "output")))
@@ -231,7 +280,7 @@ Regeln:
             )
 
         message = client.messages.create(
-            model="claude-opus-4-6",
+            model=_CLAUDE_MODEL,
             max_tokens=1400 if long else 800,
             messages=[{"role": "user", "content": attempt_prompt}],
         )
@@ -256,9 +305,9 @@ Regeln:
         print(f"   ✓ Ähnlichkeitscheck OK (Versuch {attempt}/{MAX_ATTEMPTS})")
         break
 
-    # Rotierende Base-Hashtags hinzufügen (keine Duplikate)
+    # Rotierende Base-Hashtags hinzufügen — themenspezifisch, keine Duplikate
     existing_tags = {h.lower() for h in data.get("hashtags", [])}
-    for tag in _get_base_hashtags():
+    for tag in _get_base_hashtags(topic):
         if tag.lower() not in existing_tags:
             data["hashtags"].append(tag)
 
