@@ -18,7 +18,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import Body, FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -416,7 +416,7 @@ def get_config():
 
 
 @app.post("/api/analytics/sync-cache")
-def sync_analytics_cache(data: list):
+def sync_analytics_cache(data: list = Body(...)):
     """Empfängt Analytics-Cache von lokalem Mac und speichert ihn."""
     from analytics_scraper import CACHE_FILE as _CACHE_FILE
     global _analytics_last_refresh
