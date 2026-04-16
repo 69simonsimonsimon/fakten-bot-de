@@ -290,18 +290,34 @@ def start_upload(filename: str, custom_caption: str = ""):
 
 
 def _run_upload(filename: str, video_path: str, caption: str, max_attempts: int = 3):
+    meta_file = Path(video_path).with_suffix(".json")
+
     for attempt in range(1, max_attempts + 1):
+        # ── Doppelpost-Schutz: bereits hochgeladen? → sofort abbrechen ──────
+        try:
+            if meta_file.exists():
+                _m = json.loads(meta_file.read_text(encoding="utf-8"))
+                if _m.get("uploaded"):
+                    logger.info(f"Upload übersprungen: {filename} bereits hochgeladen (Doppelpost verhindert)")
+                    uploads[filename] = "done"
+                    return
+        except Exception:
+            pass
+
         try:
             logger.info(f"Upload Versuch {attempt}/{max_attempts}: {filename}")
             uploads[filename] = f"running (Versuch {attempt}/{max_attempts})"
             ok = upload_video_browser(video_path, caption)
             if ok:
+                # Sofort als hochgeladen markieren — verhindert Doppelpost bei späterem Fehler
+                try:
+                    if meta_file.exists():
+                        meta = json.loads(meta_file.read_text(encoding="utf-8"))
+                        meta["uploaded"] = True
+                        meta_file.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+                except Exception as meta_e:
+                    logger.warning(f"Metadata-Update fehlgeschlagen (Upload war erfolgreich): {meta_e}")
                 uploads[filename] = "done"
-                meta_file = Path(video_path).with_suffix(".json")
-                if meta_file.exists():
-                    meta = json.loads(meta_file.read_text(encoding="utf-8"))
-                    meta["uploaded"] = True
-                    meta_file.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
                 logger.info(f"Upload erfolgreich: {filename}")
                 notify("syncin Bot", f"✓ Video hochgeladen: {Path(video_path).stem[:40]}")
                 # Queue-Status aktualisieren
