@@ -18,8 +18,7 @@ import requests
 
 logger = logging.getLogger("syncin")
 
-ZERNIO_BASE  = "https://zernio.com/api/v1"
-CATBOX_URL   = "https://catbox.moe/user/api.php"
+ZERNIO_BASE = "https://zernio.com/api/v1"
 
 
 def _zernio_headers() -> dict:
@@ -39,25 +38,73 @@ def _account_id() -> str:
     return aid
 
 
-def _upload_to_catbox(video_path: str) -> str:
+def _upload_to_host(video_path: str) -> str:
     """
-    Lädt das Video zu catbox.moe hoch (kostenlos, kein Account nötig, max 200 MB).
-    Gibt die öffentliche URL zurück, die Zernio dann abruft.
+    Lädt das Video zu einem temporären Hoster hoch und gibt die öffentliche URL zurück.
+    Probiert mehrere Dienste bis einer klappt (Fallback-Kette).
     """
     size_mb = Path(video_path).stat().st_size / 1_048_576
-    logger.info(f"   Catbox-Upload: {size_mb:.1f} MB ...")
-    with open(video_path, "rb") as f:
-        resp = requests.post(
-            CATBOX_URL,
-            data={"reqtype": "fileupload"},
-            files={"fileToUpload": ("video.mp4", f, "video/mp4")},
-            timeout=180,
-        )
-    if not resp.ok or not resp.text.startswith("https://"):
-        raise RuntimeError(f"Catbox-Upload fehlgeschlagen: HTTP {resp.status_code} — {resp.text[:200]}")
-    url = resp.text.strip()
-    logger.info(f"   Catbox-URL: {url}")
-    return url
+    logger.info(f"   Video-Upload: {size_mb:.1f} MB ...")
+
+    errors = []
+
+    # 1. 0x0.st — open source, funktioniert von Server-IPs, bis 512 MB
+    try:
+        with open(video_path, "rb") as f:
+            resp = requests.post(
+                "https://0x0.st",
+                files={"file": ("video.mp4", f, "video/mp4")},
+                timeout=180,
+            )
+        if resp.ok and resp.text.strip().startswith("https://"):
+            url = resp.text.strip()
+            logger.info(f"   0x0.st: {url}")
+            return url
+        errors.append(f"0x0.st HTTP {resp.status_code}: {resp.text[:100]}")
+    except Exception as e:
+        errors.append(f"0x0.st: {e}")
+    logger.warning(f"   0x0.st fehlgeschlagen: {errors[-1]}")
+
+    # 2. Litterbox (catbox temp, 72h) — anderer Endpoint als catbox.moe
+    try:
+        with open(video_path, "rb") as f:
+            resp = requests.post(
+                "https://litterbox.catbox.moe/resources/internals/api.php",
+                data={"reqtype": "fileupload", "time": "72h"},
+                files={"fileToUpload": ("video.mp4", f, "video/mp4")},
+                timeout=180,
+            )
+        if resp.ok and resp.text.strip().startswith("https://"):
+            url = resp.text.strip()
+            logger.info(f"   Litterbox: {url}")
+            return url
+        errors.append(f"Litterbox HTTP {resp.status_code}: {resp.text[:100]}")
+    except Exception as e:
+        errors.append(f"Litterbox: {e}")
+    logger.warning(f"   Litterbox fehlgeschlagen: {errors[-1]}")
+
+    # 3. transfer.sh — per PUT-Request
+    try:
+        filename = Path(video_path).name
+        with open(video_path, "rb") as f:
+            resp = requests.put(
+                f"https://transfer.sh/{filename}",
+                data=f,
+                headers={"Max-Downloads": "5", "Max-Days": "1"},
+                timeout=180,
+            )
+        if resp.ok and resp.text.strip().startswith("https://"):
+            url = resp.text.strip()
+            logger.info(f"   transfer.sh: {url}")
+            return url
+        errors.append(f"transfer.sh HTTP {resp.status_code}: {resp.text[:100]}")
+    except Exception as e:
+        errors.append(f"transfer.sh: {e}")
+    logger.warning(f"   transfer.sh fehlgeschlagen: {errors[-1]}")
+
+    raise RuntimeError(
+        f"Alle Hosting-Dienste fehlgeschlagen ({size_mb:.1f} MB): " + " | ".join(errors)
+    )
 
 
 def _create_tiktok_post(video_url: str, caption: str) -> str:
@@ -133,7 +180,7 @@ def upload_video_zernio(video_path: str, caption: str) -> bool:
     3. Warte auf Bestätigung
     """
     try:
-        video_url = _upload_to_catbox(video_path)
+        video_url = _upload_to_host(video_path)
         post_id   = _create_tiktok_post(video_url, caption)
         published = _wait_for_publish(post_id)
         if published:
