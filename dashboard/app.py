@@ -86,6 +86,13 @@ uploads: dict[str, str] = {}      # filename → "running" | "done" | "error"
 batch_jobs: dict[str, dict] = {}  # batch_id → batch-status
 
 
+# ── Healthcheck (Railway) ─────────────────────────────────────────────────────
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
 # ── Video-Liste ───────────────────────────────────────────────────────────────
 
 @app.get("/api/videos")
@@ -1059,6 +1066,7 @@ if __name__ == "__main__":
     threading.Thread(target=_analytics_auto_refresh_loop, daemon=True).start()
 
     port = int(os.environ.get("PORT", 8000))
-    logger.info(f"syncin Dashboard gestartet → http://localhost:{port}")
-    print(f"\n  syncin Dashboard  →  http://localhost:{port}\n")
+    logger.info(f"syncin Dashboard gestartet → http://0.0.0.0:{port}")
+    print(f"\n  syncin Dashboard  →  http://0.0.0.0:{port}\n")
+    # Railway braucht host=0.0.0.0 damit der Healthcheck durchkommt
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
