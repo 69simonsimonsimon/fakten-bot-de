@@ -300,54 +300,59 @@ def _run_upload(filename: str, video_path: str, caption: str, max_attempts: int 
         uploads[filename] = "error"
         return
 
+    upload_ok = False
+
     for attempt in range(1, max_attempts + 1):
         # ── Doppelpost-Schutz: bereits hochgeladen? → sofort abbrechen ──────
         try:
-            if meta_file.exists():
-                _m = json.loads(meta_file.read_text(encoding="utf-8"))
-                if _m.get("uploaded"):
-                    logger.info(f"Upload übersprungen: {filename} bereits hochgeladen (Doppelpost verhindert)")
-                    uploads[filename] = "done"
-                    return
+            if meta_file.exists() and json.loads(meta_file.read_text(encoding="utf-8")).get("uploaded"):
+                logger.info(f"Upload übersprungen: {filename} bereits hochgeladen (Doppelpost verhindert)")
+                uploads[filename] = "done"
+                return
         except Exception:
             pass
 
+        logger.info(f"Upload Versuch {attempt}/{max_attempts}: {filename}")
+        uploads[filename] = f"running (Versuch {attempt}/{max_attempts})"
+
         try:
-            logger.info(f"Upload Versuch {attempt}/{max_attempts}: {filename}")
-            uploads[filename] = f"running (Versuch {attempt}/{max_attempts})"
             ok = upload_video_browser(video_path, caption)
-            if ok:
-                # Sofort als hochgeladen markieren — verhindert Doppelpost bei späterem Fehler
-                try:
-                    if meta_file.exists():
-                        meta = json.loads(meta_file.read_text(encoding="utf-8"))
-                        meta["uploaded"] = True
-                        meta_file.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-                except Exception as meta_e:
-                    logger.warning(f"Metadata-Update fehlgeschlagen (Upload war erfolgreich): {meta_e}")
-                uploads[filename] = "done"
-                logger.info(f"Upload erfolgreich: {filename}")
-                notify("syncin Bot", f"✓ Video hochgeladen: {Path(video_path).stem[:40]}")
-                # Queue-Status aktualisieren
-                for item in upload_queue:
-                    if item["filename"] == filename and item["status"] == "uploading":
-                        item["status"] = "done"
-                return
-            else:
-                logger.warning(f"Upload fehlgeschlagen (Versuch {attempt}/{max_attempts}): {filename}")
         except Exception as e:
             logger.error(f"Upload-Fehler (Versuch {attempt}/{max_attempts}): {e}")
+            ok = False
 
-        if attempt < max_attempts:
-            uploads[filename] = f"wartet auf Retry ({attempt}/{max_attempts})…"
-            time.sleep(60)
+        if ok:
+            # Sofort als hochgeladen markieren
+            try:
+                if meta_file.exists():
+                    meta = json.loads(meta_file.read_text(encoding="utf-8"))
+                    meta["uploaded"] = True
+                    meta_file.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception as meta_e:
+                logger.warning(f"Metadata-Update fehlgeschlagen (Upload war erfolgreich): {meta_e}")
+            upload_ok = True
+            break   # ← Sofort raus — kein Retry nach erfolgreichem Upload möglich
+        else:
+            logger.warning(f"Upload fehlgeschlagen (Versuch {attempt}/{max_attempts}): {filename}")
+            if attempt < max_attempts:
+                uploads[filename] = f"wartet auf Retry ({attempt}/{max_attempts})…"
+                time.sleep(60)
 
-    uploads[filename] = "error"
-    for item in upload_queue:
-        if item["filename"] == filename and item["status"] == "uploading":
-            item["status"] = "error"
-    logger.error(f"Upload endgültig fehlgeschlagen nach {max_attempts} Versuchen: {filename}")
-    notify("syncin Bot", f"❌ Upload fehlgeschlagen: {Path(video_path).stem[:40]}")
+    # ── Cleanup außerhalb der Retry-Schleife ─────────────────────────────────
+    if upload_ok:
+        uploads[filename] = "done"
+        logger.info(f"Upload erfolgreich: {filename}")
+        notify("syncin Bot", f"✓ Video hochgeladen: {Path(video_path).stem[:40]}")
+        for item in upload_queue:
+            if item["filename"] == filename and item["status"] == "uploading":
+                item["status"] = "done"
+    else:
+        uploads[filename] = "error"
+        for item in upload_queue:
+            if item["filename"] == filename and item["status"] == "uploading":
+                item["status"] = "error"
+        logger.error(f"Upload endgültig fehlgeschlagen nach {max_attempts} Versuchen: {filename}")
+        notify("syncin Bot", f"❌ Upload fehlgeschlagen: {Path(video_path).stem[:40]}")
 
 
 @app.get("/api/upload-status/{filename}")
