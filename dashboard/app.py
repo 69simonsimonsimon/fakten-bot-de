@@ -788,7 +788,7 @@ def _run_scheduled_single(job_id: str, slot: dict):
     else:
         # ── Neues Video generieren + hochladen ─────────────────────────────
         topic = slot.get("topic") or None
-        long  = slot.get("long", False)
+        long  = slot.get("long", True)   # Zeitplan-Posts immer lang — egal was in alter schedule.json steht
         _run_generation(job_id, topic, long)
         job = jobs.get(job_id, {})
         if job.get("video"):
