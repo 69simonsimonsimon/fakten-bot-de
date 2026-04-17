@@ -568,7 +568,7 @@ class ScheduleSlot(BaseModel):
     mode:     str  = "new"       # "new" = generieren, "existing" = vorhandenes Video
     topic:    str  = ""
     filename: str  = ""          # nur relevant wenn mode == "existing"
-    long:     bool = False
+    long:     bool = True        # Zeitplan-Posts immer lang (≥1 min) für bessere Performance
 
 class ScheduleConfig(BaseModel):
     enabled:          bool               = False
@@ -581,7 +581,7 @@ DEFAULT_SCHEDULE = {
     "enabled":          False,
     "recovery_until":   None,   # ISO-Datum "YYYY-MM-DD" oder None
     "recovery_reason":  "",
-    "slots": [{"time": "18:00", "mode": "new", "topic": "", "filename": "", "long": False}],
+    "slots": [{"time": "18:00", "mode": "new", "topic": "", "filename": "", "long": True}],
 }
 
 

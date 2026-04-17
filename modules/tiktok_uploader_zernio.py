@@ -9,6 +9,7 @@ Benötigt in .env:
     ZERNIO_TIKTOK_ACCOUNT_ID=...
 """
 
+import json
 import logging
 import os
 import time
@@ -172,25 +173,56 @@ def _wait_for_publish(post_id: str, max_wait: int = 120) -> bool:
     return False
 
 
+def _mark_uploaded(video_path: str):
+    """Schreibt uploaded=True sofort in die Metadaten — verhindert Doppelpost bei Retry."""
+    meta = Path(video_path).with_suffix(".json")
+    try:
+        if meta.exists():
+            d = json.loads(meta.read_text(encoding="utf-8"))
+            d["uploaded"] = True
+            meta.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+            logger.info("   ✓ Metadata: uploaded=True gesetzt")
+    except Exception as e:
+        logger.warning(f"   Metadata-Update fehlgeschlagen: {e}")
+
+
 def upload_video_zernio(video_path: str, caption: str) -> bool:
     """
     Hauptfunktion: Lädt Video via Zernio zu TikTok hoch.
-    1. Video → catbox.moe (public URL)
-    2. Zernio API → TikTok post
-    3. Warte auf Bestätigung
+    1. Video → temporärer Hoster (public URL)
+    2. Zernio API → TikTok post erstellen
+    3. Sofort uploaded=True setzen (Doppelpost-Schutz)
+    4. Warte auf Bestätigung (Fehler hier verhindern keinen Erfolg mehr)
     """
+    # Phase 1: Video hochladen — darf fehlschlagen, kein Post erstellt
     try:
         video_url = _upload_to_host(video_path)
-        post_id   = _create_tiktok_post(video_url, caption)
+    except Exception as e:
+        logger.error(f"   ✗ Video-Upload fehlgeschlagen: {e}")
+        return False
+
+    # Phase 2: Post erstellen — darf fehlschlagen, noch kein Post erstellt
+    try:
+        post_id = _create_tiktok_post(video_url, caption)
+    except Exception as e:
+        logger.error(f"   ✗ Post-Erstellung fehlgeschlagen: {e}")
+        return False
+
+    # Phase 3: Post ist erstellt → SOFORT als hochgeladen markieren
+    # Jeder Retry-Versuch danach wird durch den Doppelpost-Schutz in _run_upload geblockt
+    _mark_uploaded(video_path)
+
+    # Phase 4: Auf Veröffentlichung warten — Fehler hier ändern nichts mehr am Ergebnis
+    try:
         published = _wait_for_publish(post_id)
         if published:
             logger.info("   ✓ TikTok-Video erfolgreich veröffentlicht!")
         else:
             logger.warning("   ⚠️  Post erstellt, Status unklar — prüfe TikTok manuell")
-        return True  # Post wurde erstellt, auch wenn Status noch pending
     except Exception as e:
-        logger.error(f"   ✗ Upload-Fehler: {e}")
-        return False
+        logger.warning(f"   Status-Check übersprungen (Post wurde erstellt): {e}")
+
+    return True
 
 
 # Kompatibilitäts-Alias (app.py bleibt unverändert)
