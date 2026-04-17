@@ -582,7 +582,6 @@ def create_video(
             "-profile:v", "high",    # H.264 High Profile
             "-level", "4.0",         # Kompatibel mit 1080p30
             "-pix_fmt", "yuv420p",   # TikTok-Anforderung
-            "-af", "loudnorm=I=-14:TP=-2:LRA=11",  # Lautstärke auf TikTok-Standard normalisieren
             "-b:a", "192k",          # Audio 192kbps
             "-threads", "0",
         ],
