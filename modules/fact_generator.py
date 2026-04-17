@@ -2,7 +2,12 @@ import anthropic
 import json
 import os
 import re
+import threading
 from pathlib import Path
+
+# Lock verhindert dass zwei gleichzeitige Generierungen dieselbe History lesen
+# und denselben Fakt zweimal erstellen (Race Condition bei Batch-Generierung)
+_generation_lock = threading.Lock()
 
 # ── Modell ────────────────────────────────────────────────────────────────────
 # Über Railway-Variable ANTHROPIC_MODEL überschreibbar (z.B. claude-opus-4-6
@@ -177,7 +182,14 @@ def generate_fact(topic: str = "general", long: bool = False) -> dict:
     """
     Generiert einen Fakt mit Titel, Text, Beschreibung und Hashtags.
     Vermeidet dabei alle bereits generierten Fakten — auch inhaltlich ähnliche.
+    Thread-sicher: nur eine Generierung gleichzeitig (verhindert doppelte Fakten).
     """
+    with _generation_lock:
+        return _generate_fact_locked(topic=topic, long=long)
+
+
+def _generate_fact_locked(topic: str = "general", long: bool = False) -> dict:
+    """Interne Implementierung — wird nur innerhalb des _generation_lock aufgerufen."""
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"].strip())
 
     fact_length = (
