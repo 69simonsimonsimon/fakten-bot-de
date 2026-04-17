@@ -293,6 +293,13 @@ def start_upload(filename: str, custom_caption: str = ""):
 def _run_upload(filename: str, video_path: str, caption: str, max_attempts: int = 3):
     meta_file = Path(video_path).with_suffix(".json")
 
+    # ── Dateigrößen-Check: kaputte/leere Videos nie hochladen ───────────────
+    video_size = Path(video_path).stat().st_size if Path(video_path).exists() else 0
+    if video_size < 500_000:  # < 500 KB = definitiv unvollständig
+        logger.error(f"Upload abgebrochen: {filename} ist zu klein ({video_size // 1024} KB) — Video-Generierung wahrscheinlich fehlgeschlagen")
+        uploads[filename] = "error"
+        return
+
     for attempt in range(1, max_attempts + 1):
         # ── Doppelpost-Schutz: bereits hochgeladen? → sofort abbrechen ──────
         try:
