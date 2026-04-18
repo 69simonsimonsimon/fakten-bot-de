@@ -290,7 +290,7 @@ def start_upload(filename: str, custom_caption: str = ""):
     return {"status": "started"}
 
 
-def _run_upload(filename: str, video_path: str, caption: str, max_attempts: int = 3):
+def _run_upload(filename: str, video_path: str, caption: str, max_attempts: int = 1):
     meta_file = Path(video_path).with_suffix(".json")
 
     # ── Dateigrößen-Check: kaputte/leere Videos nie hochladen ───────────────
