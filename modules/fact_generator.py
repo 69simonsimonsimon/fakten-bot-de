@@ -195,7 +195,7 @@ def _generate_fact_locked(topic: str = "general", long: bool = False) -> dict:
     fact_length = (
         "Den Fakt ausführlich in 10-12 spannenden Sätzen erklären (Deutsch). "
         "Erkläre den Hintergrund, gib Beispiele, nenne Zahlen und überrasche mit einem Abschluss-Gedanken. "
-        "WICHTIG: Mindestens 250 Wörter — das Video muss über 60 Sekunden lang sein!"
+        "WICHTIG: Mindestens 300 Wörter — das Video muss über 60 Sekunden lang sein! Zähle deine Wörter."
         if long else
         "Den Fakt in 2-3 spannenden Sätzen erklärt (Deutsch). Überraschend und lehrreich."
     )

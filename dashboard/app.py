@@ -153,7 +153,21 @@ def _run_generation(job_id: str, topic: str | None, long: bool):
 
         upd("Erstelle Voiceover …", 30)
         tts_text = f"{fact_data['title']}. {fact_data['fact']}"
+        word_count = len(tts_text.split())
+        logger.info(f"TTS-Text: {word_count} Wörter")
         _, word_timings = text_to_speech(tts_text, str(audio_path), topic=topic)
+
+        # Mindestdauer prüfen — wenn Audio kürzer als 58s, nochmal generieren
+        if long:
+            from moviepy import AudioFileClip as _AFC
+            _af = _AFC(str(audio_path)); _dur = _af.duration; _af.close()
+            logger.info(f"Audio-Dauer: {_dur:.1f}s")
+            if _dur < 58:
+                logger.warning(f"Audio zu kurz ({_dur:.1f}s < 58s) — generiere mehr Inhalt")
+                fact_data = generate_fact(topic, long=long)
+                tts_text  = f"{fact_data['title']}. {fact_data['fact']}"
+                logger.info(f"Neuer TTS-Text: {len(tts_text.split())} Wörter")
+                _, word_timings = text_to_speech(tts_text, str(audio_path), topic=topic)
 
         upd("Erstelle Video …", 55)
         visual_query = fact_data.get("visual_query", "").strip()
