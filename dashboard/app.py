@@ -168,6 +168,10 @@ def _run_generation(job_id: str, topic: str | None, long: bool):
                 tts_text  = f"{fact_data['title']}. {fact_data['fact']}"
                 logger.info(f"Neuer TTS-Text: {len(tts_text.split())} Wörter")
                 _, word_timings = text_to_speech(tts_text, str(audio_path), topic=topic)
+                _af2 = _AFC(str(audio_path)); _dur2 = _af2.duration; _af2.close()
+                logger.info(f"Audio-Dauer nach Retry: {_dur2:.1f}s")
+                if _dur2 < 58:
+                    raise ValueError(f"Video zu kurz ({_dur2:.1f}s) — Upload abgebrochen. Bitte manuell neu generieren.")
 
         upd("Erstelle Video …", 55)
         visual_query = fact_data.get("visual_query", "").strip()
