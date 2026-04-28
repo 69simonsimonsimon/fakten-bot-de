@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>syncin — Bot Status</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #0a0a0f;
+    color: #e8e8f0;
+    min-height: 100vh;
+    padding: 16px;
+    padding-top: env(safe-area-inset-top, 16px);
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+    padding-top: 8px;
+  }
+
+  header h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
+
+  #refresh-btn {
+    background: #1e1e2e;
+    border: 1px solid #2e2e45;
+    color: #a0a0c0;
+    border-radius: 10px;
+    padding: 8px 14px;
+    font-size: 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  #refresh-btn.spinning svg { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #last-update { text-align: center; font-size: 11px; color: #555570; margin-bottom: 20px; }
+
+  .bot-card {
+    background: #13131f;
+    border: 1px solid #1e1e30;
+    border-radius: 18px;
+    padding: 18px;
+    margin-bottom: 16px;
+  }
+
+  .bot-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  .bot-name { font-size: 18px; font-weight: 700; }
+  .bot-handle { font-size: 12px; color: #666680; margin-top: 2px; }
+
+  .status-pill { padding: 5px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
+  .status-pill.online  { background: #0d2a1a; color: #2ecc71; border: 1px solid #1a4a2a; }
+  .status-pill.offline { background: #2a0d0d; color: #e74c3c; border: 1px solid #4a1a1a; }
+  .status-pill.loading { background: #1a1a2a; color: #888; border: 1px solid #2a2a3a; }
+
+  .section-label {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.8px; color: #444460;
+    margin-bottom: 8px; margin-top: 14px;
+  }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+  .tab {
+    flex: 1; padding: 8px 4px; border-radius: 10px;
+    border: 1px solid #1e1e30; background: #0d0d1a;
+    color: #555570; font-size: 12px; font-weight: 600;
+    cursor: pointer; text-align: center; transition: all .15s;
+  }
+  .tab.active { background: #1a1a2e; border-color: #3a3a5a; color: #e8e8f0; }
+
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* Stats grid */
+  .stats-row { display: flex; gap: 8px; }
+  .stat-box { flex: 1; background: #0d0d1a; border-radius: 10px; padding: 10px 8px; text-align: center; }
+  .stat-value { font-size: 20px; font-weight: 700; }
+  .stat-label { font-size: 10px; color: #555570; margin-top: 2px; }
+
+  /* Platform stats */
+  .platform-block {
+    background: #0d0d1a; border-radius: 12px; padding: 12px 14px; margin-bottom: 8px;
+  }
+  .platform-header {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+  }
+  .platform-logo { font-size: 18px; }
+  .platform-name { font-size: 14px; font-weight: 700; }
+  .platform-sub  { font-size: 11px; color: #555570; }
+  .platform-badge {
+    margin-left: auto; font-size: 10px; padding: 3px 8px;
+    border-radius: 6px; font-weight: 600;
+  }
+  .platform-badge.live   { background: #0d2a1a; color: #2ecc71; }
+  .platform-badge.nodata { background: #1a1a1a; color: #444; }
+
+  .plat-stats { display: flex; gap: 6px; }
+  .plat-stat { flex: 1; text-align: center; }
+  .plat-stat-val { font-size: 16px; font-weight: 700; }
+  .plat-stat-lbl { font-size: 10px; color: #555570; }
+
+  .no-data-msg { font-size: 12px; color: #444460; text-align: center; padding: 8px 0; }
+
+  /* Top video */
+  .top-video {
+    background: #0a0a14; border-radius: 8px; padding: 8px 10px;
+    margin-top: 8px; border: 1px solid #1a1a28;
+  }
+  .top-video-label { font-size: 10px; color: #444460; margin-bottom: 4px; }
+  .top-video-title { font-size: 12px; font-weight: 600; line-height: 1.3; }
+  .top-video-views { font-size: 11px; color: #2ecc71; margin-top: 3px; }
+
+  /* Schedule */
+  .slots-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .slot-box { background: #0d0d1a; border-radius: 10px; padding: 10px 12px; display: flex; align-items: center; gap: 8px; }
+  .slot-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .slot-dot.next     { background: #2ecc71; box-shadow: 0 0 6px #2ecc71; }
+  .slot-dot.done     { background: #333350; }
+  .slot-dot.upcoming { background: #f39c12; }
+  .slot-time { font-size: 15px; font-weight: 700; }
+  .slot-label { font-size: 10px; color: #555570; }
+
+  .next-slot-banner {
+    background: linear-gradient(135deg, #0d2a1a, #0a1a0d);
+    border: 1px solid #1a3a2a; border-radius: 10px; padding: 10px 14px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .next-slot-banner .dot {
+    width: 10px; height: 10px; border-radius: 50%; background: #2ecc71;
+    box-shadow: 0 0 8px #2ecc71; animation: pulse 1.5s ease-in-out infinite; flex-shrink: 0;
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .next-slot-banner .label { font-size: 10px; color: #2ecc71; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; }
+  .next-slot-banner .time  { font-size: 16px; font-weight: 700; margin-top: 1px; }
+
+  .error-msg { color: #e74c3c; font-size: 13px; text-align: center; padding: 12px; }
+  .loading-msg { color: #444; font-size: 13px; text-align: center; padding: 20px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div><h1>syncin Bots</h1></div>
+  <button id="refresh-btn" onclick="loadAll()">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <path d="M23 4v6h-6M1 20v-6h6"/>
+      <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+    </svg>
+    Refresh
+  </button>
+</header>
+
+<div id="last-update">Wird geladen…</div>
+
+<!-- DE BOT -->
+<div class="bot-card">
+  <div class="bot-header">
+    <div>
+      <div class="bot-name">🇩🇪 DE Bot</div>
+      <div class="bot-handle">@syncin2</div>
+    </div>
+    <div class="status-pill loading" id="de-status">…</div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('de','stats',this)">📊 Stats</div>
+    <div class="tab" onclick="switchTab('de','schedule',this)">🕐 Zeitplan</div>
+  </div>
+
+  <div id="de-stats" class="tab-content active">
+    <div class="loading-msg">Laden…</div>
+  </div>
+  <div id="de-schedule" class="tab-content">
+    <div class="loading-msg">Laden…</div>
+  </div>
+</div>
+
+<!-- EN BOT -->
+<div class="bot-card">
+  <div class="bot-header">
+    <div>
+      <div class="bot-name">🇺🇸 EN Bot</div>
+      <div class="bot-handle">@syncinUS</div>
+    </div>
+    <div class="status-pill loading" id="en-status">…</div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('en','stats',this)">📊 Stats</div>
+    <div class="tab" onclick="switchTab('en','schedule',this)">🕐 Zeitplan</div>
+  </div>
+
+  <div id="en-stats" class="tab-content active">
+    <div class="loading-msg">Laden…</div>
+  </div>
+  <div id="en-schedule" class="tab-content">
+    <div class="loading-msg">Laden…</div>
+  </div>
+</div>
+
+<script>
+const DE_URL = "https://syncin-bot-production.up.railway.app";
+const EN_URL = "https://tiktok-bot-english-production.up.railway.app";
+
+function switchTab(bot, tab, el) {
+  const card = el.closest('.bot-card');
+  card.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  card.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById(`${bot}-${tab}`).classList.add('active');
+}
+
+function timeUntil(slotUTC) {
+  const [h, m] = slotUTC.split(':').map(Number);
+  const now = new Date();
+  const slot = new Date();
+  slot.setUTCHours(h, m, 0, 0);
+  if (slot <= now) slot.setDate(slot.getDate() + 1);
+  const diff = Math.round((slot - now) / 60000);
+  if (diff < 60) return `in ${diff} Min`;
+  return `in ${Math.floor(diff/60)}h ${diff%60}m`;
+}
+
+function nextSlot(slots) {
+  const now = new Date();
+  const nowMin = now.getUTCHours() * 60 + now.getUTCMinutes();
+  let best = null, bestDiff = Infinity;
+  for (const s of slots) {
+    const [h, m] = s.time.split(':').map(Number);
+    let diff = (h * 60 + m) - nowMin;
+    if (diff <= 0) diff += 1440;
+    if (diff < bestDiff) { bestDiff = diff; best = s; }
+  }
+  return best;
+}
+
+function slotLocalTime(utcTime) {
+  const [h, m] = utcTime.split(':').map(Number);
+  const d = new Date();
+  d.setUTCHours(h, m, 0, 0);
+  return d.toLocaleTimeString('de-DE', {hour:'2-digit', minute:'2-digit'});
+}
+
+function isSlotDone(utcTime) {
+  const [h, m] = utcTime.split(':').map(Number);
+  const now = new Date();
+  return (now.getUTCHours() * 60 + now.getUTCMinutes()) > (h * 60 + m + 5);
+}
+
+function fmtNum(n) {
+  if (n >= 1000000) return (n/1000000).toFixed(1) + 'M';
+  if (n >= 1000)    return (n/1000).toFixed(1) + 'K';
+  return String(n);
+}
+
+function renderSchedule(slots, enabled) {
+  const next = nextSlot(slots);
+  let html = '';
+  if (next) {
+    html += `<div class="next-slot-banner">
+      <div class="dot"></div>
+      <div>
+        <div class="label">Nächster Upload</div>
+        <div class="time">${slotLocalTime(next.time)} Uhr (${timeUntil(next.time)})</div>
+      </div>
+    </div>`;
+  }
+  html += `<div class="section-label" style="margin-top:14px">Alle Slots</div><div class="slots-grid">`;
+  for (const s of slots) {
+    const isNext = next && s.time === next.time;
+    const isDone = isSlotDone(s.time);
+    const dotClass = isNext ? 'next' : isDone ? 'done' : 'upcoming';
+    html += `<div class="slot-box">
+      <div class="slot-dot ${dotClass}"></div>
+      <div><div class="slot-time">${slotLocalTime(s.time)}</div><div class="slot-label">${s.time} UTC</div></div>
+    </div>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
+function renderStats(analytics, botId) {
+  const data = analytics.data || [];
+  const totalViews    = data.reduce((s,v) => s + (v.views||0), 0);
+  const totalLikes    = data.reduce((s,v) => s + (v.likes||0), 0);
+  const totalComments = data.reduce((s,v) => s + (v.comments||0), 0);
+  const totalShares   = data.reduce((s,v) => s + (v.shares||0), 0);
+  const best = data.length ? data.reduce((a,b) => (a.views||0) > (b.views||0) ? a : b) : null;
+  const avgViews = data.length ? Math.round(totalViews / data.length) : 0;
+
+  const hasTikTok = data.length > 0;
+
+  let topVideoHtml = '';
+  if (best) {
+    topVideoHtml = `<div class="top-video">
+      <div class="top-video-label">🏆 Bestes Video</div>
+      <div class="top-video-title">${best.title.slice(0, 70)}${best.title.length > 70 ? '…' : ''}</div>
+      <div class="top-video-views">${fmtNum(best.views)} Views</div>
+    </div>`;
+  }
+
+  return `
+    <!-- TikTok -->
+    <div class="platform-block">
+      <div class="platform-header">
+        <div class="platform-logo">🎵</div>
+        <div><div class="platform-name">TikTok</div><div class="platform-sub">${botId === 'de' ? '@syncin2' : '@syncinUS'}</div></div>
+        <div class="platform-badge ${hasTikTok ? 'live' : 'nodata'}">${hasTikTok ? '● Live' : 'Keine Daten'}</div>
+      </div>
+      ${hasTikTok ? `
+        <div class="plat-stats">
+          <div class="plat-stat"><div class="plat-stat-val">${fmtNum(totalViews)}</div><div class="plat-stat-lbl">Views</div></div>
+          <div class="plat-stat"><div class="plat-stat-val">${fmtNum(totalLikes)}</div><div class="plat-stat-lbl">Likes</div></div>
+          <div class="plat-stat"><div class="plat-stat-val">${fmtNum(totalComments)}</div><div class="plat-stat-lbl">Kommentare</div></div>
+          <div class="plat-stat"><div class="plat-stat-val">${fmtNum(avgViews)}</div><div class="plat-stat-lbl">Ø Views</div></div>
+        </div>
+        ${topVideoHtml}
+      ` : `<div class="no-data-msg">Analytics werden nach dem ersten TikTok-Upload verfügbar</div>`}
+    </div>
+
+    <!-- YouTube -->
+    <div class="platform-block">
+      <div class="platform-header">
+        <div class="platform-logo">▶️</div>
+        <div><div class="platform-name">YouTube Shorts</div><div class="platform-sub">Gleiche Videos wie TikTok</div></div>
+        <div class="platform-badge nodata">Keine API</div>
+      </div>
+      <div class="no-data-msg">YouTube Analytics nicht über API verfügbar — direkt in YouTube Studio prüfen</div>
+    </div>
+
+    <!-- Instagram -->
+    <div class="platform-block">
+      <div class="platform-header">
+        <div class="platform-logo">📸</div>
+        <div><div class="platform-name">Instagram Reels</div><div class="platform-sub">Gleiche Videos wie TikTok</div></div>
+        <div class="platform-badge nodata">Keine API</div>
+      </div>
+      <div class="no-data-msg">Instagram Analytics nicht über API verfügbar — direkt in der App prüfen</div>
+    </div>
+
+    <div style="margin-top:10px;font-size:10px;color:#333350;text-align:center">${data.length} Videos erfasst · Auto-Refresh alle 60s</div>
+  `;
+}
+
+async function loadBot(baseUrl, botId, statusElId) {
+  const statusEl  = document.getElementById(statusElId);
+  const statsEl   = document.getElementById(`${botId}-stats`);
+  const schedEl   = document.getElementById(`${botId}-schedule`);
+  try {
+    const [analyticsRes, scheduleRes] = await Promise.all([
+      fetch(baseUrl + '/api/analytics').then(r => r.json()),
+      fetch(baseUrl + '/api/schedule').then(r => r.json()),
+    ]);
+
+    statusEl.textContent = '● Online';
+    statusEl.className = 'status-pill online';
+
+    statsEl.innerHTML  = renderStats(analyticsRes, botId);
+    schedEl.innerHTML  = renderSchedule(scheduleRes.slots || [], scheduleRes.enabled);
+  } catch(e) {
+    statusEl.textContent = '● Offline';
+    statusEl.className = 'status-pill offline';
+    statsEl.innerHTML  = `<div class="error-msg">Verbindung fehlgeschlagen</div>`;
+    schedEl.innerHTML  = `<div class="error-msg">Verbindung fehlgeschlagen</div>`;
+  }
+}
+
+async function loadAll() {
+  const btn = document.getElementById('refresh-btn');
+  btn.classList.add('spinning');
+  document.getElementById('last-update').textContent = 'Aktualisiert…';
+
+  await Promise.all([
+    loadBot(DE_URL, 'de', 'de-status'),
+    loadBot(EN_URL, 'en', 'en-status'),
+  ]);
+
+  btn.classList.remove('spinning');
+  const now = new Date().toLocaleTimeString('de-DE', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  document.getElementById('last-update').textContent = `Zuletzt aktualisiert: ${now}`;
+}
+
+loadAll();
+setInterval(loadAll, 60000);
+</script>
+</body>
+</html>

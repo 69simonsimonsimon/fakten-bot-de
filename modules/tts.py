@@ -1,38 +1,17 @@
 import asyncio
-import base64
 import os
 import re
 
 import edge_tts
-from elevenlabs import ElevenLabs
+import requests as _requests
 
-# ── Zwei Stimmen je nach Thema ────────────────────────────────────────────────
-#
-#  STIMME 1 – NARRATOR  (Wissenschaft, Geschichte, Weltall, Technik …)
-#    Ruhig, autoritär, Doku-Stil
-#    ElevenLabs: Marcus  (lNDVWnlRYtLKcBKNFtRM)
-#    Edge TTS:   de-DE-FlorianMultilingualNeural
-#
-#  STIMME 2 – CREATOR   (Pop-Kultur, Tiere, Essen, Psychologie …)
-#    Energetisch, jung, Social-Media-Stil
-#    ElevenLabs: Liam    (TX3LPaxmHKxFdv7VOQHJ)
-#    Edge TTS:   de-DE-SeraphinaMultilingualNeural
-#
-# ─────────────────────────────────────────────────────────────────────────────
+# ElevenLabs: Domi — energetisch, gut für Fakten-Videos
+_EL_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "AZnzlk1XvdvUeBnXmlld")
+_EL_MODEL    = "eleven_multilingual_v2"
 
-_VOICE_NARRATOR = {
-    "elevenlabs_id": os.environ.get("ELEVENLABS_VOICE_NARRATOR", "lNDVWnlRYtLKcBKNFtRM"),  # Marcus
-    "edge_tts":      "de-DE-FlorianMultilingualNeural",
-    "label":         "Narrator",
-}
+OPENAI_VOICE = "onyx"
+OPENAI_MODEL = "tts-1"
 
-_VOICE_CREATOR = {
-    "elevenlabs_id": os.environ.get("ELEVENLABS_VOICE_CREATOR", "TX3LPaxmHKxFdv7VOQHJ"),   # Liam
-    "edge_tts":      "de-DE-SeraphinaMultilingualNeural",
-    "label":         "Creator",
-}
-
-# Themen → Creator-Stimme (alle anderen → Narrator)
 _CREATOR_TOPICS = {
     "pop culture", "popkultur", "pop-kultur",
     "animals", "tiere",
@@ -40,61 +19,66 @@ _CREATOR_TOPICS = {
     "psychology", "psychologie",
 }
 
-ELEVENLABS_MODEL = "eleven_multilingual_v2"
 
+# ── ElevenLabs TTS ────────────────────────────────────────────────────────────
 
-def _pick_voice(topic: str) -> dict:
-    """Wählt Stimme basierend auf Thema."""
-    t = (topic or "").lower().strip()
-    return _VOICE_CREATOR if t in _CREATOR_TOPICS else _VOICE_NARRATOR
-
-
-# ── ElevenLabs ────────────────────────────────────────────────────────────────
-
-def _chars_to_words(alignment: dict) -> list[dict]:
-    chars  = alignment["characters"]
-    starts = alignment["character_start_times_seconds"]
-    ends   = alignment["character_end_times_seconds"]
-
-    word_timings = []
-    current_word = ""
-    word_start   = None
-
-    for char, start, end in zip(chars, starts, ends):
-        if char in (" ", "\n", "\t"):
-            if current_word:
-                word_timings.append({"word": current_word, "start": word_start, "end": end})
-                current_word = ""
-                word_start   = None
-        else:
-            if not current_word:
-                word_start = start
-            current_word += char
-
-    if current_word:
-        word_timings.append({"word": current_word, "start": word_start, "end": ends[-1]})
-
-    return word_timings
-
-
-def _tts_elevenlabs(text: str, audio_path: str, api_key: str, voice: dict) -> list[dict]:
-    client   = ElevenLabs(api_key=api_key)
-    response = client.text_to_speech.convert_with_timestamps(
-        voice_id=voice["elevenlabs_id"],
-        text=text,
-        model_id=ELEVENLABS_MODEL,
-        output_format="mp3_44100_192",
+def _tts_elevenlabs(text: str, audio_path: str, api_key: str) -> list[dict]:
+    """ElevenLabs TTS → Whisper für Word-Timings."""
+    url  = f"https://api.elevenlabs.io/v1/text-to-speech/{_EL_VOICE_ID}"
+    resp = _requests.post(
+        url,
+        headers={"xi-api-key": api_key, "Content-Type": "application/json"},
+        json={
+            "text":     text,
+            "model_id": _EL_MODEL,
+            "voice_settings": {
+                "stability":         0.45,
+                "similarity_boost":  0.80,
+                "style":             0.30,
+                "use_speaker_boost": True,
+            },
+        },
+        timeout=120,
     )
-    audio_bytes = base64.b64decode(response.audio_base_64)
+    resp.raise_for_status()
     with open(audio_path, "wb") as f:
-        f.write(audio_bytes)
+        f.write(resp.content)
 
-    alignment = response.alignment
-    return _chars_to_words({
-        "characters":                    alignment.characters,
-        "character_start_times_seconds": alignment.character_start_times_seconds,
-        "character_end_times_seconds":   alignment.character_end_times_seconds,
-    })
+    # Whisper für Word-Timings
+    from openai import OpenAI
+    wc = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    with open(audio_path, "rb") as f:
+        tr = wc.audio.transcriptions.create(
+            model="whisper-1", file=f,
+            response_format="verbose_json",
+            timestamp_granularities=["word"],
+        )
+    return [{"word": w.word.strip(), "start": w.start, "end": w.end} for w in (tr.words or [])]
+
+
+# ── OpenAI TTS + Whisper word timings ────────────────────────────────────────
+
+def _tts_openai(text: str, audio_path: str, api_key: str) -> list[dict]:
+    from openai import OpenAI
+    client = OpenAI(api_key=api_key)
+
+    response = client.audio.speech.create(
+        model=OPENAI_MODEL,
+        voice=OPENAI_VOICE,
+        input=text,
+    )
+    with open(audio_path, "wb") as f:
+        f.write(response.content)
+
+    with open(audio_path, "rb") as f:
+        transcript = client.audio.transcriptions.create(
+            model="whisper-1",
+            file=f,
+            response_format="verbose_json",
+            timestamp_granularities=["word"],
+        )
+
+    return [{"word": w.word.strip(), "start": w.start, "end": w.end} for w in (transcript.words or [])]
 
 
 # ── Edge TTS Fallback ─────────────────────────────────────────────────────────
@@ -117,25 +101,33 @@ async def _tts_edge_async(text: str, audio_path: str, voice_name: str) -> list[d
 
 def text_to_speech(text: str, output_path: str, topic: str = "") -> tuple[str, list[dict]]:
     """
-    Erstellt Audio mit Word-Timings.
-    Wählt Stimme je nach Thema:
-      - Wissenschaft/Geschichte/Weltall/… → Narrator (ruhig, autoritär)
-      - Pop-Kultur/Tiere/Essen/Psychologie → Creator (energetisch, jung)
-    Nutzt ElevenLabs wenn ELEVENLABS_API_KEY gesetzt, sonst Edge TTS.
+    ElevenLabs (primär) → OpenAI TTS → Edge TTS Fallback.
+    Gibt (audio_path, word_timings) zurück.
     """
-    voice  = _pick_voice(topic)
-    el_key = os.environ.get("ELEVENLABS_API_KEY", "").strip()
+    el_key     = os.environ.get("ELEVENLABS_API_KEY", "").strip()
+    openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
 
-    if el_key:
+    if el_key and openai_key:
         try:
-            print(f"   ElevenLabs TTS [{voice['label']}]: {voice['elevenlabs_id']}")
-            timings = _tts_elevenlabs(text, output_path, el_key, voice)
+            print(f"   ElevenLabs TTS [{_EL_VOICE_ID}] ...")
+            timings = _tts_elevenlabs(text, output_path, el_key)
             return output_path, timings
         except Exception as e:
-            print(f"   ElevenLabs Fehler: {e} — nutze Edge TTS als Fallback")
+            print(f"   ElevenLabs Fehler: {e} — OpenAI Fallback")
 
-    print(f"   Edge TTS [{voice['label']}]: {voice['edge_tts']}")
-    timings = asyncio.run(_tts_edge_async(text, output_path, voice["edge_tts"]))
+    if openai_key:
+        try:
+            print(f"   OpenAI TTS [{OPENAI_VOICE}] ...")
+            timings = _tts_openai(text, output_path, openai_key)
+            return output_path, timings
+        except Exception as e:
+            print(f"   OpenAI TTS Fehler: {e} — Edge TTS Fallback")
+
+    # Edge TTS Fallback — Stimme je nach Thema
+    t = (topic or "").lower().strip()
+    voice_name = "de-DE-SeraphinaMultilingualNeural" if t in _CREATOR_TOPICS else "de-DE-FlorianMultilingualNeural"
+    print(f"   Edge TTS Fallback: {voice_name}")
+    timings = asyncio.run(_tts_edge_async(text, output_path, voice_name))
     return output_path, timings
 
 

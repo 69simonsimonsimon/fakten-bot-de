@@ -65,6 +65,28 @@ _backgrounds_env = os.environ.get("BACKGROUNDS_DIR", "")
 CACHE_DIR = Path(_backgrounds_env) if _backgrounds_env else Path(__file__).parent.parent / "assets" / "backgrounds"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+
+def _is_valid_video(path: Path) -> bool:
+    """Prüft ob ein Video-File lesbar und groß genug ist. Korrupte Dateien werden gelöscht."""
+    try:
+        if path.stat().st_size < 1_048_576:  # < 1 MB → korrupt/unvollständig
+            path.unlink(missing_ok=True)
+            print(f"   ⚠️  Korruptes Hintergrundvideo gelöscht (zu klein): {path.name}")
+            return False
+        import subprocess
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=nb_frames", "-of", "csv=p=0", str(path)],
+            capture_output=True, timeout=10
+        )
+        if result.returncode != 0:
+            path.unlink(missing_ok=True)
+            print(f"   ⚠️  Korruptes Hintergrundvideo gelöscht (ffprobe Fehler): {path.name}")
+            return False
+        return True
+    except Exception:
+        return False
+
 MUSIC_DIR = Path(__file__).parent.parent / "assets" / "music"
 MUSIC_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -112,8 +134,8 @@ def _fetch_pexels_video(query: str, api_key: str, max_videos: int = 5) -> str | 
     import random
     slug = query.replace(" ", "_")
 
-    # Bereits gecachte Videos für dieses Thema finden
-    cached = sorted(CACHE_DIR.glob(f"{slug}_*.mp4"))
+    # Bereits gecachte Videos für dieses Thema finden — korrupte ausfiltern
+    cached = [p for p in sorted(CACHE_DIR.glob(f"{slug}_*.mp4")) if _is_valid_video(p)]
     if len(cached) >= max_videos:
         chosen = random.choice(cached)
         return str(chosen)
@@ -147,7 +169,8 @@ def _fetch_pexels_video(query: str, api_key: str, max_videos: int = 5) -> str | 
                 continue
 
             files = sorted(video["video_files"], key=lambda f: f.get("width", 0), reverse=True)
-            url   = next((f["link"] for f in files if f.get("width", 0) >= 1080), files[0]["link"])
+            url   = next((f["link"] for f in files if f.get("width", 0) >= 2160), None) or \
+                    next((f["link"] for f in files if f.get("width", 0) >= 1080), files[0]["link"])
 
             try:
                 print(f"   Lade Hintergrundvideo {idx} herunter...")
@@ -189,10 +212,10 @@ def _fetch_multiple_pexels_videos(query: str, api_key: str, count: int = 2) -> l
 
     for sub_q in queries:
         slug   = sub_q.replace(" ", "_")
-        cached = sorted(CACHE_DIR.glob(f"{slug}_*.mp4"))
+        cached = [p for p in sorted(CACHE_DIR.glob(f"{slug}_*.mp4")) if _is_valid_video(p)]
         if len(cached) < PER_QUERY:
             _fetch_pexels_video(sub_q, api_key, max_videos=PER_QUERY)
-            cached = sorted(CACHE_DIR.glob(f"{slug}_*.mp4"))
+            cached = [p for p in sorted(CACHE_DIR.glob(f"{slug}_*.mp4")) if _is_valid_video(p)]
         all_paths.extend(str(p) for p in cached)
 
     # Alte einfache Caches (z.B. space_01.mp4) ebenfalls als Pool nutzen
@@ -208,7 +231,7 @@ def _fetch_multiple_pexels_videos(query: str, api_key: str, count: int = 2) -> l
     return all_paths[:count]
 
 
-def _make_background(video_path: str | None, duration: float, gradient_index: int):
+def _make_background(video_path: str | None, duration: float, gradient_index: int, zoom: bool = False):
     if video_path:
         try:
             clip = VideoFileClip(video_path)
@@ -223,6 +246,20 @@ def _make_background(video_path: str | None, duration: float, gradient_index: in
             if clip.duration < duration:
                 clip = concatenate_videoclips([clip] * (int(duration / clip.duration) + 2))
             clip = clip.subclipped(0, duration)
+
+            # Ken Burns: leichter Zoom von 1.0 → 1.06 über die Clip-Dauer
+            if zoom:
+                def _zoom_frame(get_frame, t):
+                    frame  = get_frame(t)
+                    scale  = 1.0 + 0.06 * (t / max(duration, 1))
+                    new_h  = int(HEIGHT * scale)
+                    new_w  = int(WIDTH  * scale)
+                    img    = Image.fromarray(frame).resize((new_w, new_h), Image.BILINEAR)
+                    off_x  = (new_w - WIDTH)  // 2
+                    off_y  = (new_h - HEIGHT) // 2
+                    return np.array(img)[off_y:off_y + HEIGHT, off_x:off_x + WIDTH]
+                clip = clip.transform(_zoom_frame)
+
             overlay = ColorClip((WIDTH, HEIGHT), color=(0,0,0)).with_opacity(0.48).with_duration(duration)
             return CompositeVideoClip([clip, overlay])
         except Exception as e:
@@ -234,39 +271,48 @@ def _make_background(video_path: str | None, duration: float, gradient_index: in
 def _make_multi_background(video_paths: list[str], duration: float, gradient_index: int):
     """
     Teilt die Gesamtdauer gleichmäßig auf mehrere Videos auf.
-    Jedes Segment bekommt ein anderes Hintergrundvideo.
+    Jedes Segment bekommt ein anderes Hintergrundvideo + Ken Burns Zoom.
     """
     if not video_paths:
         idx = gradient_index % len(GRADIENTS)
         return ImageClip(_gradient_bg(*GRADIENTS[idx])).with_duration(duration)
 
-    n       = len(video_paths)
-    seg_dur = duration / n
-    segments = [_make_background(path, seg_dur, gradient_index) for path in video_paths]
+    n        = len(video_paths)
+    seg_dur  = duration / n
+    segments = [_make_background(path, seg_dur, gradient_index, zoom=True) for path in video_paths]
     return concatenate_videoclips(segments)
 
 
-# ── Header-Design ────────────────────────────────────────────────────────────
+# ── Header-Design ─────────────────────────────────────────────────────────────
 
 def _render_header(title: str) -> np.ndarray:
     """
     Rendert den Header:
-    - 'WUSSTEST DU?' als grelles Badge mit Farbverlauf
-    - Darunter der Titel in weiß/fett, automatisch auf Bildbreite angepasst
+    - Sauberes minimales Pill-Badge: halbtransparenter dunkler Hintergrund,
+      kleines Emoji 💡 + 'Wusstest du?' in Weiß
+    - Darunter der Titel in großem, fettem Weiß mit Drop-Shadow, kein farbiger
+      Hintergrund — nur der Text
     """
-    MAX_TITLE_W = WIDTH - 100   # 980px — Titel muss hier reinpassen
-    font_badge  = ImageFont.truetype(BOLD, 54)
-    badge_text  = "WUSSTEST DU?"
+    MAX_TITLE_W = WIDTH - 100
 
-    # ── Schriftgröße automatisch verkleinern bis Titel auf eine Zeile passt ──
-    font_size = 66
-    MIN_SIZE  = 36
+    # ── Pill-Badge: "💡 Wusstest du?" ────────────────────────────────────────
+    pill_text  = "💡 Wusstest du?"
+    font_pill  = ImageFont.truetype(BOLD, 38)
+    pill_tw    = int(font_pill.getlength(pill_text))
+    pill_pad_x = 28
+    pill_pad_y = 14
+    pill_w     = pill_tw + pill_pad_x * 2
+    pill_h     = 38 + pill_pad_y * 2  # Schriftgröße + vertikaler Abstand
+
+    # ── Schriftgröße automatisch verkleinern bis Titel passt ─────────────────
+    font_size  = 66
+    MIN_SIZE   = 36
     font_title = ImageFont.truetype(BOLD, font_size)
     while font_size > MIN_SIZE and font_title.getlength(title) > MAX_TITLE_W:
         font_size -= 3
         font_title = ImageFont.truetype(BOLD, font_size)
 
-    # ── Falls immer noch zu lang: auf 2 Zeilen umbrechen ─────────────────────
+    # ── Falls immer noch zu lang: auf mehrere Zeilen umbrechen ───────────────
     def _wrap(text: str, font, max_w: int) -> list[str]:
         words, lines, cur = text.split(), [], ""
         for w in words:
@@ -286,40 +332,34 @@ def _render_header(title: str) -> np.ndarray:
     else:
         title_lines = [title]
 
-    # ── Maße berechnen ────────────────────────────────────────────────────────
-    badge_w  = int(font_badge.getlength(badge_text)) + 60
-    badge_h  = 84
-    line_h   = font_size + 12
-    title_h  = len(title_lines) * line_h + 4
+    line_h     = font_size + 12
+    title_h    = len(title_lines) * line_h + 4
+    gap        = 20  # Abstand zwischen Pill und Titel
 
     max_line_w = max(int(font_title.getlength(l)) for l in title_lines)
-    total_w  = min(max(badge_w, max_line_w + 60, 700), WIDTH - 20)
-    total_h  = badge_h + 20 + title_h
+    total_w    = min(max(pill_w, max_line_w + 60, 700), WIDTH - 20)
+    total_h    = pill_h + gap + title_h
 
     img  = Image.new("RGBA", (total_w, total_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    # ── Gradient-Badge (orange → gelb) ───────────────────────────────────────
-    badge_img = Image.new("RGBA", (badge_w, badge_h), (0, 0, 0, 0))
-    b_draw    = ImageDraw.Draw(badge_img)
-    for x in range(badge_w):
-        t = x / badge_w
-        b_draw.line([(x, 0), (x, badge_h)], fill=(255, int(100 + 115 * t), 0, 255))
-    mask = Image.new("L", (badge_w, badge_h), 0)
-    ImageDraw.Draw(mask).rounded_rectangle([(0, 0), (badge_w - 1, badge_h - 1)], radius=18, fill=255)
-    badge_img.putalpha(mask)
-    bx = (total_w - badge_w) // 2
-    img.paste(badge_img, (bx, 0), badge_img)
+    # ── Pill zeichnen ─────────────────────────────────────────────────────────
+    bx = (total_w - pill_w) // 2
+    draw.rounded_rectangle(
+        [(bx, 0), (bx + pill_w - 1, pill_h - 1)],
+        radius=pill_h // 2,
+        fill=(20, 20, 20, 170),
+    )
+    # Pill-Text zentriert
+    tx = bx + (pill_w - pill_tw) // 2
+    ty = (pill_h - 38) // 2
+    draw.text((tx, ty), pill_text, font=font_pill, fill=(255, 255, 255, 255))
 
-    # Badge-Text
-    tx = (total_w - int(font_badge.getlength(badge_text))) // 2
-    draw.text((tx + 2, 16 + 2), badge_text, font=font_badge, fill=(0, 0, 0, 120))
-    draw.text((tx, 16),          badge_text, font=font_badge, fill=(20, 20, 20, 255))
-
-    # ── Titel-Zeilen (weiß mit Schatten) ─────────────────────────────────────
-    ty = badge_h + 20
+    # ── Titel-Zeilen (weiß mit Drop-Shadow, kein Hintergrund) ────────────────
+    ty = pill_h + gap
     for line in title_lines:
         tx2 = (total_w - int(font_title.getlength(line))) // 2
+        # Drop-Shadow
         draw.text((tx2 + 2, ty + 2), line, font=font_title, fill=(0, 0, 0, 180))
         draw.text((tx2, ty),          line, font=font_title, fill=(255, 255, 255, 255))
         ty += line_h
@@ -452,6 +492,8 @@ def _make_karaoke_clips(
     return [karaoke_clip]
 
 
+
+
 # ── Branding & UI-Overlays ────────────────────────────────────────────────────
 
 def _render_watermark() -> np.ndarray:
@@ -527,6 +569,82 @@ def _mix_background_music(speech: AudioFileClip, duration: float) -> AudioFileCl
         return speech
 
 
+# ── Hook-Overlay (erste 4s) ───────────────────────────────────────────────────
+
+_TOPIC_EMOJIS = {
+    "space":       "🚀", "science":    "🔬", "nature":     "🌿",
+    "animals":     "🦁", "technology": "💻", "psychology": "🧠",
+    "history":     "🏛️",  "food":       "🍽️",  "geography":  "🌍",
+    "human body":  "💪", "pop culture":"🎬", "popkultur":  "🎬",
+}
+
+def _render_hook_frame(title: str, topic: str) -> np.ndarray:
+    """
+    Rendert den Hook-Overlay: großes Emoji oben, darunter der Titel in
+    einer dramatischen, fetten Schrift. Halbtransparenter dunkler Hintergrund.
+    """
+    emoji    = _TOPIC_EMOJIS.get(topic.lower(), "🤯")
+    font_em  = ImageFont.truetype(BOLD, 110)
+    font_txt = ImageFont.truetype(BOLD, 72)
+
+    MAX_W    = WIDTH - 80
+    # Titel umbrechen
+    words, lines, cur = title.split(), [], ""
+    for w in words:
+        probe = (cur + " " + w).strip()
+        if font_txt.getlength(probe) <= MAX_W:
+            cur = probe
+        else:
+            if cur: lines.append(cur)
+            cur = w
+    if cur: lines.append(cur)
+
+    line_h  = 72 + 14
+    em_h    = 130
+    gap     = 20
+    total_h = em_h + gap + len(lines) * line_h + 60
+    total_w = WIDTH - 40
+
+    img  = Image.new("RGBA", (total_w, total_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    # Dunkler halbtransparenter Hintergrund
+    draw.rounded_rectangle([(0, 0), (total_w - 1, total_h - 1)], radius=32, fill=(0, 0, 0, 185))
+
+    # Emoji zentriert oben
+    ew = int(font_em.getlength(emoji))
+    draw.text(((total_w - ew) // 2, 20), emoji, font=font_em, fill=(255, 255, 255, 255))
+
+    # Titel-Zeilen
+    ty = em_h + gap
+    for line in lines:
+        lw = int(font_txt.getlength(line))
+        tx = (total_w - lw) // 2
+        draw.text((tx + 2, ty + 2), line, font=font_txt, fill=(0, 0, 0, 180))  # Schatten
+        draw.text((tx,     ty    ), line, font=font_txt, fill=(255, 255, 255, 255))
+        ty += line_h
+
+    return np.array(img)
+
+
+def _make_hook_clip(title: str, topic: str, total_dur: float, hook_dur: float = 4.0):
+    """
+    Gibt einen Hook-Clip zurück: erscheint sofort, hält bis hook_dur,
+    dann FadeOut über 0.5s. Ist für die ersten 4s des Videos sichtbar.
+    """
+    frame = _render_hook_frame(title, topic)
+    fh, fw = frame.shape[:2]
+    pos_x  = (WIDTH  - fw) // 2
+    pos_y  = int(HEIGHT * 0.28) - fh // 2   # obere Bildhälfte
+
+    return (
+        ImageClip(frame)
+        .with_duration(hook_dur)
+        .with_position((pos_x, pos_y))
+        .with_effects([vfx.FadeIn(0.2), vfx.FadeOut(0.5)])
+    )
+
+
 # ── Haupt-Funktion ────────────────────────────────────────────────────────────
 
 def create_video(
@@ -566,13 +684,16 @@ def create_video(
         .with_effects([vfx.FadeIn(0.4)])
     )
 
-    # Karaoke-Text (nur Fakt-Wörter)
+    # Hook-Overlay (erste 4 Sekunden) — dramatischer Einstieg
+    clips.append(_make_hook_clip(title, topic, total_dur, hook_dur=4.0))
+
+    # Karaoke-Text (nur Fakt-Wörter, 3 Wörter pro Gruppe für schnelleren Rhythmus)
     if word_timings:
         # Nur Wörter des Fakts benutzen (Titel-Wörter überspringen)
         title_word_count = len(title.split())
         fact_timings = word_timings[title_word_count + 1:]  # +1 für den Punkt nach Titel
         if fact_timings:
-            clips.extend(_make_karaoke_clips(fact_timings, total_dur, group_size=4))
+            clips.extend(_make_karaoke_clips(fact_timings, total_dur, group_size=3))
 
     # @syncin2 Wasserzeichen (unten rechts)
     wm_img = _render_watermark()
@@ -596,13 +717,13 @@ def create_video(
     video.write_videofile(
         output_path, fps=30, codec="libx264", audio_codec="aac", logger=None,
         ffmpeg_params=[
-            "-preset", "veryfast",   # Schnell kodieren — TikTok komprimiert sowieso nach
-            "-crf", "18",            # Qualität: 0=perfekt, 23=Standard → 18=hohe Qualität
-            "-profile:v", "high",    # H.264 High Profile
-            "-level", "4.0",         # Kompatibel mit 1080p30
-            "-pix_fmt", "yuv420p",   # TikTok-Anforderung
-            "-b:a", "192k",          # Audio 192kbps
-            "-threads", "0",
+            "-preset", "ultrafast",   # war: medium — ultrafast braucht ~60% weniger RAM
+            "-crf", "26",             # war: 22 — TikTok encodiert sowieso neu
+            "-profile:v", "high",
+            "-level", "4.2",
+            "-pix_fmt", "yuv420p",
+            "-b:a", "192k",
+            "-threads", "2",          # war: 0 (alle Kerne) — begrenzt Thread-Buffer RAM
         ],
     )
     audio.close()

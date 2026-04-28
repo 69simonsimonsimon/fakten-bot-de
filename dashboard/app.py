@@ -19,6 +19,7 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import Body, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -35,7 +36,7 @@ IS_RAILWAY = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILW
 # ── Logging ───────────────────────────────────────────────────────────────────
 _log_base = Path(os.environ.get("OUTPUT_DIR", str(ROOT / "output")))
 LOG_DIR   = _log_base / "logs"
-LOG_DIR.mkdir(exist_ok=True)
+LOG_DIR.mkdir(exist_ok=True, parents=True)
 LOG_FILE = LOG_DIR / "bot.log"
 
 _handler = RotatingFileHandler(str(LOG_FILE), maxBytes=1_000_000, backupCount=3, encoding="utf-8")
@@ -46,14 +47,50 @@ logger.addHandler(_handler)
 logger.addHandler(logging.StreamHandler())  # auch auf stdout
 
 
-# ── macOS-Benachrichtigungen ──────────────────────────────────────────────────
+# ── Telegram-Benachrichtigungen ───────────────────────────────────────────────
+def _tg_credentials():
+    token   = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    return token, chat_id
+
 def notify(title: str, message: str):
+    """Sendet Telegram-Benachrichtigung. Kein Fehler falls env vars fehlen."""
     try:
-        subprocess.run(
-            ["osascript", "-e",
-             f'display notification "{message}" with title "{title}" sound name "Glass"'],
-            timeout=5, capture_output=True,
+        import urllib.request as _ur, json as _j
+        _token, _chat_id = _tg_credentials()
+        if not _token or not _chat_id:
+            return
+        _body = _j.dumps({
+            "chat_id": _chat_id,
+            "text": f"<b>{title}</b>\n{message}",
+            "parse_mode": "HTML",
+        }).encode()
+        _req = _ur.Request(
+            f"https://api.telegram.org/bot{_token}/sendMessage",
+            data=_body, headers={"Content-Type": "application/json"},
         )
+        _ur.urlopen(_req, timeout=10)
+    except Exception:
+        pass
+
+def notify_photo(image_path: str, caption: str):
+    """Schickt ein Foto (Thumbnail) per Telegram. Kein Fehler falls env vars fehlen."""
+    try:
+        import requests as _req
+        _token, _chat_id = _tg_credentials()
+        if not _token or not _chat_id:
+            return
+        from pathlib import Path as _P
+        p = _P(image_path)
+        if not p.exists():
+            return
+        with open(p, "rb") as f:
+            _req.post(
+                f"https://api.telegram.org/bot{_token}/sendPhoto",
+                data={"chat_id": _chat_id, "caption": caption[:1024]},
+                files={"photo": (p.name, f, "image/jpeg")},
+                timeout=30,
+            )
     except Exception:
         pass
 
@@ -61,7 +98,7 @@ try:
     from fact_generator import generate_fact
     from tts import text_to_speech
     from video_creator import create_video
-    from tiktok_uploader_zernio import upload_video_browser
+    from tiktok_uploader_zernio import upload_video_browser, DuplicateContentError
     from analytics_scraper import fetch_analytics, load_cached
 except Exception as _import_err:
     logger.error(f"Import-Fehler beim Start: {_import_err}")
@@ -74,24 +111,156 @@ TOPICS = [
     "science", "history", "nature", "technology", "space",
     "animals", "psychology", "food", "geography", "human body",
     "pop culture",
+    "dark history",       # Schockierende historische Fakten
+    "crime",              # Wahre Verbrechen & ungelöste Fälle
+    "conspiracy truth",   # Echte Verschwörungen (Watergate, MK-Ultra etc.)
+    "money",              # Reichtum, Ungleichheit, schockierende Zahlen
+    "war",                # Kriege, überraschende Fakten
+    "medicine",           # Schockierende Medizin-Geschichte
+    "survival",           # Extreme Überlebensgeschichten
 ]
+
+_SENSITIVE_TOPICS = {"dark history", "crime", "conspiracy truth", "money", "war", "medicine"}
+
+
+def _pick_topic() -> str:
+    """
+    Wählt ein Thema intelligent:
+    - Vermeidet Themen die in den letzten 14 Tagen schon benutzt wurden
+    - Verhindert dass 3x hintereinander ein sensitives Thema kommt
+    """
+    from datetime import timedelta
+    cutoff = datetime.now() - timedelta(days=14)
+
+    # Letzte Topics aus Metadaten lesen
+    recent: list[tuple] = []
+    for jf in sorted(OUTPUT_DIR.glob("video_*.json"), key=lambda f: f.stat().st_mtime, reverse=True):
+        try:
+            if datetime.fromtimestamp(jf.stat().st_mtime) < cutoff:
+                break
+            m = json.loads(jf.read_text(encoding="utf-8"))
+            t = m.get("topic", "")
+            if t:
+                recent.append(t)
+        except Exception:
+            pass
+
+    used_14d   = set(recent)
+    last_2     = recent[:2]
+
+    # Verfügbare Topics = alle die nicht in letzten 14 Tagen waren
+    available = [t for t in TOPICS if t not in used_14d]
+    if not available:
+        available = list(TOPICS)  # Reset falls alle verbraucht
+
+    # Sensitive Rotation: wenn letzte 2 beide sensitiv waren → jetzt safe
+    if sum(1 for t in last_2 if t in _SENSITIVE_TOPICS) >= 2:
+        safe = [t for t in available if t not in _SENSITIVE_TOPICS]
+        if safe:
+            available = safe
+            logger.info(f"[topic] 2 sensitive Topics in Folge — wähle sicheres Thema")
+
+    chosen = random.choice(available)
+    logger.info(f"[topic] Gewählt: '{chosen}' | Benutzt letzte 14d: {sorted(used_14d)}")
+    return chosen
+
 
 # Rotierende Call-to-Actions — täglich anderer CTA für mehr Abwechslung im Feed
 _CTAS = [
+    "Hättest du das gewusst? 👇 Kommentiere!",
+    "Schreib JA wenn das neu für dich war! 💬",
     "Folge @syncin2 für täglich neue Fakten! 🧠",
     "Mehr Fakten? Folge @syncin2! 🔥",
     "Täglich Neues auf @syncin2! ✨",
-    "Folge @syncin2 für mehr Wissen! 💡",
-    "Mehr überraschende Fakten auf @syncin2! 🚀",
-    "Wusstest du das? Folge @syncin2! 😮",
+    "Wusstest du das? Schreib es in die Kommentare! 😮",
     "Jeden Tag ein neuer Fakt — @syncin2! 📚",
-    "Bleib neugierig! Folge @syncin2! 🌍",
+    "Schreib NEIN wenn dich das überrascht hat! 🤯",
+    "Tag jemanden, der das wissen muss! 👇",
+    "Das hat mich auch sprachlos gemacht 😳 Folge @syncin2!",
+    "Kommentier die Zahl wenn du das NICHT wusstest 🔢",
+    "Das erzähl ich morgen direkt weiter 😤 Folge @syncin2!",
 ]
 
 app  = FastAPI()
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 jobs: dict[str, dict] = {}        # job_id → status-dict
-uploads: dict[str, str] = {}      # filename → "running" | "done" | "error"
+uploads: dict[str, str] = {}      # filename → "running" | "done" | "error" | "duplicate"
 batch_jobs: dict[str, dict] = {}  # batch_id → batch-status
+
+
+@app.on_event("startup")
+async def startup_recovery():
+    """Upload videos that were generated but not uploaded due to a service restart.
+    Also detects slots whose generation was interrupted mid-flight and re-triggers them."""
+    def _do_recovery():
+        time.sleep(15)
+        now = time.time()
+
+        # ── Phase 1: Upload unfertige Videos ─────────────────────────────────
+        for mp4 in sorted(OUTPUT_DIR.glob("*.mp4"), key=lambda f: f.stat().st_mtime, reverse=True):
+            age_h = (now - mp4.stat().st_mtime) / 3600
+            if age_h > 6:
+                break
+            if age_h < (2 / 60):  # Weniger als 2 Min alt → wird gerade generiert, überspringen
+                continue
+            meta_file = mp4.with_suffix(".json")
+            if not meta_file.exists():
+                continue
+            try:
+                meta = json.loads(meta_file.read_text(encoding="utf-8"))
+                if meta.get("uploaded"):
+                    continue
+                caption  = meta.get("caption", "")
+                filename = mp4.name
+                if filename in uploads:
+                    continue
+                logger.info(f"Startup-Recovery: nicht hochgeladenes Video gefunden: {filename} ({age_h:.1f}h alt)")
+                uploads[filename] = "running"
+                _run_upload(filename, str(mp4), caption)
+            except Exception as e:
+                logger.warning(f"Startup-Recovery Fehler für {mp4.name}: {e}")
+
+        # ── Phase 2: Unterbrochene Slot-Generierung erkennen & nachholen ─────
+        try:
+            _now_dt    = datetime.now()
+            _today     = _now_dt.strftime("%Y-%m-%d")
+            _now_epoch = time.time()
+            _fired     = _load_fired_keys()
+            _cfg       = _load_schedule_cfg()
+            _SKIP_JSON = {"used_facts.json", "fired_keys.json", "schedule.json", "used_posts.json"}
+
+            if _cfg.get("enabled"):
+                for _slot in _cfg.get("slots", []):
+                    _slot_time = _slot.get("time", "")
+                    if not _slot_time or ":" not in _slot_time:
+                        continue
+                    _key = f"{_today}_{_slot_time}"
+                    if _key not in _fired:
+                        continue
+
+                    _t_h, _t_m = int(_slot_time.split(":")[0]), int(_slot_time.split(":")[1])
+                    _slot_epoch = _now_dt.replace(
+                        hour=_t_h, minute=_t_m, second=0, microsecond=0
+                    ).timestamp()
+
+                    if _now_epoch - _slot_epoch > 30 * 60 or _slot_epoch > _now_epoch:
+                        continue
+
+                    _post_mp4  = [f for f in OUTPUT_DIR.glob("*.mp4")  if f.stat().st_mtime >= _slot_epoch - 30]
+                    _post_json = [f for f in OUTPUT_DIR.glob("*.json")
+                                  if f.name not in _SKIP_JSON and f.stat().st_mtime >= _slot_epoch - 30]
+                    if _post_mp4 or _post_json:
+                        continue
+
+                    logger.info(f"Startup-Recovery: Slot {_slot_time} wurde mid-generation unterbrochen — starte Neugenerierung")
+                    _job_id = str(uuid.uuid4())[:8]
+                    jobs[_job_id] = {"status": "running", "progress": 0, "message": "Startet (Slot-Recovery)…", "video": None}
+                    threading.Thread(target=_run_scheduled_single, args=(_job_id, _slot), daemon=True).start()
+                    break
+        except Exception as _e:
+            logger.warning(f"Startup-Recovery Slot-Check Fehler: {_e}")
+
+    threading.Thread(target=_do_recovery, daemon=True).start()
 
 
 # ── Healthcheck (Railway) ─────────────────────────────────────────────────────
@@ -129,12 +298,62 @@ def list_videos():
 # ── Video generieren ──────────────────────────────────────────────────────────
 
 @app.post("/api/generate")
-def start_generate(topic: str = "", long: bool = False):
+def start_generate(topic: str = "", long: bool = True):
     job_id = str(uuid.uuid4())[:8]
     jobs[job_id] = {"status": "running", "progress": 0, "message": "Startet...", "video": None}
     t = threading.Thread(target=_run_generation, args=(job_id, topic or None, long), daemon=True)
     t.start()
     return {"job_id": job_id}
+
+
+def _free_disk_mb() -> float:
+    import shutil
+    # Check the actual data volume, not the root filesystem
+    check_path = str(OUTPUT_DIR) if OUTPUT_DIR.exists() else "/"
+    return shutil.disk_usage(check_path).free / 1_048_576
+
+
+def _cleanup_backgrounds_all():
+    """Löscht alle heruntergeladenen Hintergrundvideos nach der Generierung."""
+    try:
+        from video_creator import CACHE_DIR
+        deleted, freed = 0, 0.0
+        for v in list(CACHE_DIR.glob("*.mp4")):
+            try:
+                freed += v.stat().st_size / 1_048_576
+                v.unlink()
+                deleted += 1
+            except Exception:
+                pass
+        if deleted:
+            logger.info(f"Backgrounds bereinigt: {deleted} Videos gelöscht, {freed:.0f} MB freigegeben")
+    except Exception as e:
+        logger.warning(f"Background-Cleanup fehlgeschlagen: {e}")
+
+
+def _cleanup_cache_if_needed(min_free_mb: float = 400):
+    """Löscht älteste Background-Videos wenn Disk-Space knapp wird."""
+    try:
+        from video_creator import CACHE_DIR
+        free = _free_disk_mb()
+        if free >= min_free_mb:
+            return
+        logger.warning(f"Disk fast voll ({free:.0f} MB frei) — räume Cache auf ...")
+        videos = sorted(CACHE_DIR.glob("*.mp4"), key=lambda p: p.stat().st_mtime)
+        deleted = 0
+        for v in videos:
+            if _free_disk_mb() >= min_free_mb:
+                break
+            try:
+                size_mb = v.stat().st_size / 1_048_576
+                v.unlink()
+                deleted += 1
+                logger.info(f"   Cache gelöscht: {v.name} ({size_mb:.0f} MB)")
+            except Exception:
+                pass
+        logger.info(f"Cache-Cleanup fertig: {deleted} Videos gelöscht, {_free_disk_mb():.0f} MB frei")
+    except Exception as e:
+        logger.warning(f"Cache-Cleanup fehlgeschlagen: {e}")
 
 
 def _run_generation(job_id: str, topic: str | None, long: bool):
@@ -143,7 +362,8 @@ def _run_generation(job_id: str, topic: str | None, long: bool):
         jobs[job_id]["progress"] = pct
 
     try:
-        topic     = topic or random.choice(TOPICS)
+        _cleanup_cache_if_needed()
+        topic = topic or _pick_topic()
         stamp     = datetime.now().strftime("%Y%m%d_%H%M%S")
         audio_path = OUTPUT_DIR / f"audio_{stamp}.mp3"
         video_path = OUTPUT_DIR / f"video_{stamp}.mp4"
@@ -153,25 +373,32 @@ def _run_generation(job_id: str, topic: str | None, long: bool):
 
         upd("Erstelle Voiceover …", 30)
         tts_text = f"{fact_data['title']}. {fact_data['fact']}"
+        words = tts_text.split()
+        if len(words) > 170:
+            truncated = " ".join(words[:170])
+            # Am letzten vollständigen Satz abschneiden
+            last_end = max(truncated.rfind(". "), truncated.rfind("! "), truncated.rfind("? "))
+            tts_text = truncated[:last_end + 1] if last_end > 50 else truncated
         word_count = len(tts_text.split())
         logger.info(f"TTS-Text: {word_count} Wörter")
         _, word_timings = text_to_speech(tts_text, str(audio_path), topic=topic)
 
-        # Mindestdauer prüfen — wenn Audio kürzer als 58s, nochmal generieren
+        # Mindestdauer prüfen — wenn Audio kürzer als 52s, nochmal generieren
         if long:
             from moviepy import AudioFileClip as _AFC
             _af = _AFC(str(audio_path)); _dur = _af.duration; _af.close()
             logger.info(f"Audio-Dauer: {_dur:.1f}s")
-            if _dur < 58:
-                logger.warning(f"Audio zu kurz ({_dur:.1f}s < 58s) — generiere mehr Inhalt")
+            if _dur < 52:
+                logger.warning(f"Audio zu kurz ({_dur:.1f}s < 52s) — generiere mehr Inhalt")
                 fact_data = generate_fact(topic, long=long)
                 tts_text  = f"{fact_data['title']}. {fact_data['fact']}"
                 logger.info(f"Neuer TTS-Text: {len(tts_text.split())} Wörter")
                 _, word_timings = text_to_speech(tts_text, str(audio_path), topic=topic)
                 _af2 = _AFC(str(audio_path)); _dur2 = _af2.duration; _af2.close()
                 logger.info(f"Audio-Dauer nach Retry: {_dur2:.1f}s")
-                if _dur2 < 58:
-                    raise ValueError(f"Video zu kurz ({_dur2:.1f}s) — Upload abgebrochen. Bitte manuell neu generieren.")
+                if _dur2 < 52:
+                    logger.warning(f"Retry auch zu kurz ({_dur2:.1f}s) — fahre trotzdem fort")
+
 
         upd("Erstelle Video …", 55)
         visual_query = fact_data.get("visual_query", "").strip()
@@ -188,16 +415,29 @@ def _run_generation(job_id: str, topic: str | None, long: bool):
             visual_query=visual_query,
         )
         audio_path.unlink(missing_ok=True)
+        _cleanup_backgrounds_all()
 
         # Metadaten speichern
         description  = fact_data.get("description", fact_data["title"])
         cta          = random.choice(_CTAS)
         full_caption = description + "\n" + cta + "\n" + " ".join(fact_data["hashtags"])
+
+        # Thumbnail erstellen
+        upd("Erstelle Thumbnail …", 88)
+        thumb_path = ""
+        try:
+            from thumbnail_creator import create_thumbnail as _make_thumb
+            thumbs = _make_thumb(str(video_path), fact_data["title"], str(OUTPUT_DIR))
+            thumb_path = Path(thumbs.get("thumbnail", "")).name
+        except Exception as _te:
+            logger.warning(f"Thumbnail-Erstellung fehlgeschlagen: {_te}")
+
         meta = {
-            "title":    fact_data["title"],
-            "topic":    topic,
-            "caption":  full_caption,
-            "uploaded": False,
+            "title":     fact_data["title"],
+            "topic":     topic,
+            "caption":   full_caption,
+            "uploaded":  False,
+            "thumbnail": thumb_path,
         }
         video_path.with_suffix(".json").write_text(
             json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -223,7 +463,7 @@ def get_job(job_id: str):
 # ── Batch-Generierung ─────────────────────────────────────────────────────────
 
 @app.post("/api/generate-batch")
-def start_batch(count: int = 3, topic: str = "", long: bool = False):
+def start_batch(count: int = 3, topic: str = "", long: bool = True):
     batch_id = str(uuid.uuid4())[:8]
     batch_jobs[batch_id] = {
         "status":      "running",
@@ -309,13 +549,27 @@ def start_upload(filename: str, custom_caption: str = ""):
 
 
 def _run_upload(filename: str, video_path: str, caption: str, max_attempts: int = 1):
-    meta_file = Path(video_path).with_suffix(".json")
-
-    # ── Dateigrößen-Check: kaputte/leere Videos nie hochladen ───────────────
+    meta_file  = Path(video_path).with_suffix(".json")
     video_size = Path(video_path).stat().st_size if Path(video_path).exists() else 0
-    if video_size < 500_000:  # < 500 KB = definitiv unvollständig
+    size_mb    = round(video_size / 1_048_576, 1)
+    title      = filename
+    thumb_path = ""
+    try:
+        if meta_file.exists():
+            _m = json.loads(meta_file.read_text(encoding="utf-8"))
+            title      = _m.get("title", filename)
+            _thumb_name = _m.get("thumbnail", "")
+            if _thumb_name:
+                _thumb_full = OUTPUT_DIR / _thumb_name
+                if _thumb_full.exists():
+                    thumb_path = str(_thumb_full)
+    except Exception:
+        pass
+
+    if video_size < 500_000:
         logger.error(f"Upload abgebrochen: {filename} ist zu klein ({video_size // 1024} KB) — Video-Generierung wahrscheinlich fehlgeschlagen")
         uploads[filename] = "error"
+        _append_upload_history(filename, title, "failed", size_mb)
         return
 
     upload_ok = False
@@ -334,7 +588,12 @@ def _run_upload(filename: str, video_path: str, caption: str, max_attempts: int 
         uploads[filename] = f"running (Versuch {attempt}/{max_attempts})"
 
         try:
-            ok = upload_video_browser(video_path, caption)
+            ok = upload_video_browser(video_path, caption, thumbnail_path=thumb_path)
+        except DuplicateContentError as e:
+            logger.error(f"   ✗ Duplikat (409) — neues Video wird generiert: {e}")
+            uploads[filename] = "duplicate"
+            _append_upload_history(filename, title, "duplicate", size_mb)
+            return
         except Exception as e:
             logger.error(f"Upload-Fehler (Versuch {attempt}/{max_attempts}): {e}")
             ok = False
@@ -359,13 +618,23 @@ def _run_upload(filename: str, video_path: str, caption: str, max_attempts: int 
     # ── Cleanup außerhalb der Retry-Schleife ─────────────────────────────────
     if upload_ok:
         uploads[filename] = "done"
+        _append_upload_history(filename, title, "success", size_mb)
         logger.info(f"Upload erfolgreich: {filename}")
         notify("syncin Bot", f"✓ Video hochgeladen: {Path(video_path).stem[:40]}")
+        # Nach erfolgreichem Upload Video + Audio + Metadaten löschen
+        try:
+            Path(video_path).unlink(missing_ok=True)
+            Path(video_path).with_suffix(".mp3").unlink(missing_ok=True)
+            Path(video_path).with_suffix(".json").unlink(missing_ok=True)
+            logger.info(f"Video nach Upload gelöscht: {filename}")
+        except Exception as e:
+            logger.warning(f"Auto-Delete nach Upload fehlgeschlagen: {e}")
         for item in upload_queue:
             if item["filename"] == filename and item["status"] == "uploading":
                 item["status"] = "done"
     else:
         uploads[filename] = "error"
+        _append_upload_history(filename, title, "failed", size_mb)
         for item in upload_queue:
             if item["filename"] == filename and item["status"] == "uploading":
                 item["status"] = "error"
@@ -389,6 +658,16 @@ def delete_video(filename: str):
         meta_file.unlink()
     uploads.pop(filename, None)
     return {"status": "deleted"}
+
+
+@app.get("/api/upload-history")
+def get_upload_history():
+    if not UPLOAD_HISTORY_FILE.exists():
+        return []
+    try:
+        return json.loads(UPLOAD_HISTORY_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return []
 
 
 @app.post("/api/mark-uploaded/{filename}")
@@ -505,9 +784,29 @@ def _analytics_auto_refresh_loop():
 
 # ── Upload-Warteschlange ──────────────────────────────────────────────────────
 
-QUEUE_FILE    = OUTPUT_DIR / "upload_queue.json"
-SCHEDULE_FILE = OUTPUT_DIR / "schedule.json"
+QUEUE_FILE             = OUTPUT_DIR / "upload_queue.json"
+SCHEDULE_FILE          = OUTPUT_DIR / "schedule.json"
 ANALYTICS_HISTORY_FILE = OUTPUT_DIR / "analytics_history.json"
+UPLOAD_HISTORY_FILE    = OUTPUT_DIR / "upload_history.json"
+
+
+def _append_upload_history(filename: str, title: str, status: str, size_mb: float):
+    history = []
+    if UPLOAD_HISTORY_FILE.exists():
+        try:
+            history = json.loads(UPLOAD_HISTORY_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    history.append({
+        "filename": filename,
+        "title":    title or filename,
+        "time":     datetime.now().strftime("%d.%m. %H:%M"),
+        "status":   status,
+        "size_mb":  size_mb,
+    })
+    UPLOAD_HISTORY_FILE.write_text(
+        json.dumps(history[-20:], ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
 upload_queue: list[dict] = []   # [{filename, caption, scheduled_time, status}]
 _queue_lock = threading.Lock()
@@ -608,10 +907,15 @@ class ScheduleConfig(BaseModel):
 
 
 DEFAULT_SCHEDULE = {
-    "enabled":          False,
+    "enabled":          True,
     "recovery_until":   None,   # ISO-Datum "YYYY-MM-DD" oder None
     "recovery_reason":  "",
-    "slots": [{"time": "18:00", "mode": "new", "topic": "", "filename": "", "long": True}],
+    "slots": [
+        {"time": "10:00", "mode": "new", "topic": "", "filename": "", "long": True},
+        {"time": "13:00", "mode": "new", "topic": "", "filename": "", "long": True},
+        {"time": "18:00", "mode": "new", "topic": "", "filename": "", "long": True},
+        {"time": "23:00", "mode": "new", "topic": "", "filename": "", "long": True},
+    ],
 }
 
 
@@ -661,9 +965,30 @@ def _check_views_drop() -> tuple[bool, str]:
         return False, ""
 
 
+FIRED_KEYS_FILE = OUTPUT_DIR / "fired_keys.json"
+
+
+def _load_fired_keys() -> set:
+    try:
+        if FIRED_KEYS_FILE.exists():
+            return set(json.loads(FIRED_KEYS_FILE.read_text(encoding="utf-8")))
+    except Exception:
+        pass
+    return set()
+
+
+def _save_fired_keys(keys: set):
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        pruned = {k for k in keys if today in k or "recovery" in k or "pause" in k}
+        FIRED_KEYS_FILE.write_text(json.dumps(list(pruned), ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def _scheduler_loop():
     """Hintergrund-Thread: prüft alle 30s ob ein Slot feuern soll."""
-    fired_keys: set[str] = set()
+    fired_keys: set[str] = _load_fired_keys()
     while True:
         try:
             cfg = _load_schedule_cfg()
@@ -711,7 +1036,7 @@ def _scheduler_loop():
                 fired_keys = {k for k in fired_keys if k.startswith(today) or k.startswith("recovery") or k.startswith("pause")}
 
                 # Slot-Abstands-Warnung (nur einmal pro Tag)
-                warn_key = f"gap_warned_{today}"
+                warn_key = f"{today}_gap_warned"
                 if warn_key not in fired_keys:
                     fired_keys.add(warn_key)
                     slot_times = sorted([
@@ -726,8 +1051,15 @@ def _scheduler_loop():
                 for slot in cfg.get("slots", []):
                     target = slot.get("time", "18:00")
                     key    = f"{today}_{target}"
-                    if cur_time == target and key not in fired_keys:
+                    # Feuert wenn exakt zur Zeit ODER innerhalb von 4 Minuten danach
+                    # (fängt Restarts auf die den exakten Zeitpunkt verpassen)
+                    t_h, t_m = int(target.split(":")[0]), int(target.split(":")[1])
+                    slot_min = t_h * 60 + t_m
+                    now_min  = now.hour * 60 + now.minute
+                    in_window = slot_min <= now_min <= slot_min + 4
+                    if in_window and key not in fired_keys:
                         fired_keys.add(key)
+                        _save_fired_keys(fired_keys)
                         mode  = slot.get("mode", "new")
                         label = slot.get("filename") if mode == "existing" else (slot.get("topic") or "zufällig")
                         logger.info(f"Zeitplan: Slot um {target} feuert (mode={mode}, {label})")
@@ -747,6 +1079,12 @@ def _scheduler_loop():
 def _run_scheduled_single(job_id: str, slot: dict):
     """Führt einen Zeitplan-Slot aus: entweder neues Video generieren+hochladen
     oder ein vorhandenes Video direkt hochladen."""
+    # Zufälliger Jitter 0-12 Min damit Posts nicht immer exakt zur gleichen Zeit kommen
+    _jitter = random.randint(0, 720)
+    if _jitter:
+        logger.info(f"Zeitplan: Jitter {_jitter}s")
+        time.sleep(_jitter)
+
     mode     = slot.get("mode", "new")
     filename = slot.get("filename", "")
 
@@ -809,10 +1147,32 @@ def _run_scheduled_single(job_id: str, slot: dict):
         _run_upload(filename, str(vp), caption)
         notify("syncin Bot", f"Zeitplan: Video hochgeladen!")
     else:
-        # ── Neues Video generieren + hochladen ─────────────────────────────
-        topic = slot.get("topic") or None
-        long  = slot.get("long", True)   # Zeitplan-Posts immer lang — egal was in alter schedule.json steht
-        _run_generation(job_id, topic, long)
+        # ── Neues Video generieren + hochladen (mit Auto-Retry) ────────────
+        topic      = slot.get("topic") or None
+        long       = slot.get("long", True)
+        _slot_time = slot.get("time", "?")
+        for _attempt in range(3):  # max 3 Versuche
+            try:
+                _run_generation(job_id, topic, long)
+                break  # Erfolg
+            except Exception as _e:
+                _err = str(_e)
+                if "Broken pipe" in _err or "BrokenPipe" in _err or isinstance(_e, OSError):
+                    _delay, _reason = 30, "BrokenPipe (OOM)"
+                elif "529" in _err or "verload" in _err.lower():
+                    _delay, _reason = 90, "Anthropic 529"
+                elif "not able to create" in _err or "parse" in _err.lower():
+                    _delay, _reason = 5, "Claude-Ablehnung"
+                else:
+                    _delay, _reason = 30, type(_e).__name__
+                if _attempt < 2:
+                    logger.warning(f"Zeitplan: Slot {_slot_time} — {_reason}, Retry {_attempt+1}/2 in {_delay}s")
+                    notify("syncin Bot", f"⚠️ Slot {_slot_time}: {_reason}\nRetry {_attempt+1}/2 in {_delay}s…")
+                    time.sleep(_delay)
+                    jobs[job_id] = {"status": "running", "progress": 0, "message": f"Retry {_attempt+1}…", "video": None}
+                else:
+                    logger.error(f"Zeitplan: Slot {_slot_time} endgültig fehlgeschlagen nach 3 Versuchen: {_err}")
+                    notify("syncin Bot", f"❌ Slot {_slot_time}: Aufgegeben nach 3 Versuchen\n{_reason}: {_err[:60]}")
         job = jobs.get(job_id, {})
         if job.get("video"):
             vp     = str(OUTPUT_DIR / job["video"])
@@ -836,6 +1196,19 @@ def _run_scheduled_single(job_id: str, slot: dict):
                 logger.warning(f"Zeitplan: Caption war leer für {job['video']} — Fallback genutzt")
             logger.info(f"Zeitplan: starte Upload für {job['video']} | Caption: {caption[:60]}…")
             _run_upload(job["video"], vp, caption)
+            # 409-Duplikat: neues Video generieren und erneut hochladen
+            if uploads.get(job["video"]) == "duplicate":
+                logger.warning("Zeitplan: 409-Duplikat — regeneriere neues Video...")
+                job_id2 = str(uuid.uuid4())[:8]
+                jobs[job_id2] = {"status": "running", "progress": 0, "message": "Retry (duplicate)...", "video": None}
+                _run_generation(job_id2, topic, long)
+                job2 = jobs.get(job_id2, {})
+                if job2.get("video"):
+                    vp2   = str(OUTPUT_DIR / job2["video"])
+                    meta2 = Path(vp2).with_suffix(".json")
+                    cap2  = json.loads(meta2.read_text(encoding="utf-8")).get("caption", caption) if meta2.exists() else caption
+                    logger.info(f"Zeitplan: Retry-Upload nach Duplikat für {job2['video']}")
+                    _run_upload(job2["video"], vp2, cap2)
             notify("syncin Bot", f"Zeitplan: Video hochgeladen!")
         else:
             logger.error(f"Zeitplan: Video-Generierung fehlgeschlagen (job {job_id})")
@@ -1073,6 +1446,29 @@ def _run_prefetch(count: int):
     cache_job["status"]  = "done"
     cache_job["message"] = f"Fertig — {total} Videos im Cache (+{downloaded} neu)"
     logger.info(f"Prefetch abgeschlossen: {total} Videos total, {downloaded} neu heruntergeladen")
+
+
+@app.post("/api/cleanup-cache")
+def cleanup_cache(keep: int = 20):
+    """Löscht alle Background-Cache-Videos außer den neuesten `keep` Stück."""
+    try:
+        from video_creator import CACHE_DIR
+        videos = sorted(CACHE_DIR.glob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
+        to_delete = videos[keep:]
+        deleted = 0
+        freed_mb = 0.0
+        for v in to_delete:
+            try:
+                freed_mb += v.stat().st_size / 1_048_576
+                v.unlink()
+                deleted += 1
+            except Exception:
+                pass
+        free_now = _free_disk_mb()
+        logger.info(f"Manueller Cache-Cleanup: {deleted} Videos gelöscht, {freed_mb:.0f} MB freigegeben, {free_now:.0f} MB frei")
+        return {"deleted": deleted, "freed_mb": round(freed_mb, 1), "free_disk_mb": round(free_now, 1), "remaining": len(videos) - deleted}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # ── Video-Dateien ausliefern ──────────────────────────────────────────────────
